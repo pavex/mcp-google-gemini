@@ -1,13 +1,14 @@
 # Gemini Bridge MCP Server
 
-A simple MCP (Model Context Protocol) server that acts as a bridge to Google's Gemini AI API. Uses stdio communication with JSON-RPC 2.0 protocol.
+A lightweight, dependency-free MCP (Model Context Protocol) server that bridges Claude Desktop with Google's Gemini AI API. Enables seamless integration of Gemini models into Claude conversations using stdio communication and JSON-RPC 2.0 protocol.
 
 ## Features
 
-- Single tool: `ask_gemini(prompt: string)` - Asks a question to Gemini AI and returns the response
-- Automatic fallback to backup models when quota is exceeded (HTTP 429)
-- No external dependencies - pure Node.js
-- Tested with multiple Gemini models
+- **Single Tool**: `ask_gemini(prompt: string)` - Ask questions to Gemini AI and get responses
+- **Automatic Fallback**: Switches to backup models when quota is exceeded (HTTP 429)
+- **Zero Dependencies**: Pure Node.js implementation with no external packages required
+- **Multi-Model Support**: Tested with multiple Gemini models for reliability
+- **Lightweight Client**: Minimal footprint, fast startup, efficient resource usage
 
 ## Models
 

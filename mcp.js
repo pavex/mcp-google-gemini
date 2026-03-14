@@ -14,6 +14,14 @@ if (!API_KEY) {
   process.exit(1);
 }
 
+// Network timeouts (defensive): if Gemini stops responding we don't hang forever.
+// Configurable via env var: GEMINI_FETCH_TIMEOUT_MS (milliseconds)
+const FETCH_TIMEOUT_MS = Number(process.env.GEMINI_FETCH_TIMEOUT_MS) || 30_000;
+
+// Input buffer limits (defensive): protect against unbounded stdin growth.
+// Configurable via env var: GEMINI_MAX_STDIN_BUFFER_BYTES
+const MAX_STDIN_BUFFER_BYTES = Number(process.env.GEMINI_MAX_STDIN_BUFFER_BYTES) || 1_000_000; // ~1MB
+
 // Fallback chain – tested 2026-03-13, ordered from most powerful
 const MODELS = [
   "gemini-2.5-flash",              // primary – best performance on free tier
@@ -53,13 +61,17 @@ async function callGemini(prompt) {
   for (const model of MODELS) {
     const url = `${BASE_URL}models/${model}:generateContent?key=${API_KEY}`;
 
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
+
     try {
       const res = await fetch(url, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           contents: [{ parts: [{ text: prompt }] }]
-        })
+        }),
+        signal: controller.signal
       });
 
       const json = await res.json();
@@ -82,8 +94,15 @@ async function callGemini(prompt) {
       return { text, model };
 
     } catch (err) {
-      process.stderr.write(`[gemini-bridge] ${model} → network error: ${err.message}\n`);
-      lastError = `${model}: ${err.message}`;
+      if (err.name === "AbortError") {
+        process.stderr.write(`[gemini-bridge] ${model} → timeout (${FETCH_TIMEOUT_MS}ms)\n`);
+        lastError = `${model}: timeout`;
+      } else {
+        process.stderr.write(`[gemini-bridge] ${model} → network error: ${err.message}\n`);
+        lastError = `${model}: ${err.message}`;
+      }
+    } finally {
+      clearTimeout(timeout);
     }
   }
 
@@ -172,6 +191,14 @@ let buffer = "";
 
 process.stdin.on("data", (chunk) => {
   buffer += chunk.toString();
+
+  // Defensive: prevent unbounded growth of input buffer (potential DoS).
+  if (Buffer.byteLength(buffer, "utf8") > MAX_STDIN_BUFFER_BYTES) {
+    process.stderr.write("[gemini-bridge] ERROR: stdin buffer exceeded maximum allowed size, dropping input.\n");
+    sendError(null, -32000, "Input too large");
+    buffer = "";
+    return;
+  }
 
   const lines = buffer.split("\n");
   buffer = lines.pop(); // last incomplete fragment

@@ -53,6 +53,11 @@ gemini-2.5-flash-lite
 3. Get a Gemini API key from [Google AI Studio](https://makersuite.google.com/app/apikey)
 4. Set the environment variable `GEMINI_API_KEY=your_api_key_here` or pass it as CLI argument
 
+### Optional environment variables
+
+- `GEMINI_FETCH_TIMEOUT_MS` – request timeout in milliseconds (default: `30000`)
+- `GEMINI_MAX_STDIN_BUFFER_BYTES` – max size of stdin buffer in bytes (default: `1000000`)
+
 ## Usage
 
 ### As MCP Server

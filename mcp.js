@@ -1,12 +1,17 @@
 #!/usr/bin/env node
 
 /**
- * MCP Server – Gemini Bridge v1.3.0
+ * MCP Server – Gemini Bridge v1.5.0
  * Simple bridge for calling Gemini API via MCP protocol (stdio/JSON-RPC 2.0)
  * Automatic fallback on quota error (429).
+ * Models loaded from models.json (plain array of model name strings).
  */
 
+const fs   = require("fs");
+const path = require("path");
+
 // --- CONFIGURATION ---
+
 const API_KEY = process.argv[2] || process.env.GEMINI_API_KEY;
 if (!API_KEY) {
   process.stderr.write("[gemini-bridge] ERROR: API key not provided. Set GEMINI_API_KEY environment variable or pass as CLI argument.\n");
@@ -22,22 +27,38 @@ const FETCH_TIMEOUT_MS = Number(process.env.GEMINI_FETCH_TIMEOUT_MS) || 30_000;
 // Configurable via env var: GEMINI_MAX_STDIN_BUFFER_BYTES
 const MAX_STDIN_BUFFER_BYTES = Number(process.env.GEMINI_MAX_STDIN_BUFFER_BYTES) || 1_000_000; // ~1MB
 
-// Fallback chain – tested 2026-03-13, ordered from most powerful
-const MODELS = [
-  "gemini-2.5-flash",              // primary – best performance on free tier
-  "gemini-3-flash-preview",        // backup 1 – newer, but preview
-  "gemini-3.1-flash-lite-preview", // backup 2
-  "gemini-2.5-flash-lite",         // backup 3 – lightest, almost always available
-];
+// --- Load models from models.json ---
+
+function loadModels() {
+  const modelsPath = path.join(__dirname, "models.json");
+  try {
+    const raw = fs.readFileSync(modelsPath, "utf8");
+    const list = JSON.parse(raw);
+    if (!Array.isArray(list) || list.length === 0) {
+      throw new Error("models.json must be a non-empty array of model name strings.");
+    }
+    return list;
+  } catch (err) {
+    process.stderr.write(`[gemini-bridge] ERROR loading models.json: ${err.message}\n`);
+    process.stderr.write("[gemini-bridge] Falling back to built-in model list.\n");
+    return [
+      "gemini-2.5-flash",
+      "gemini-3-flash-preview",
+      "gemini-3.1-flash-lite-preview",
+      "gemini-2.5-flash-lite"
+    ];
+  }
+}
+
+const MODELS = loadModels();
 
 const SERVER_NAME      = "gemini-bridge";
-const SERVER_VERSION   = "1.3.0";
+const SERVER_VERSION   = "1.5.0";
 const PROTOCOL_VERSION = "2024-11-05";
 const BASE_URL         = "https://generativelanguage.googleapis.com/v1beta/";
 
-// Redirect console to stderr – stdout is reserved for JSON-RPC messages
-console.log  = console.error;
-console.info = console.error;
+// Dedicated log helper – keeps stdout clean for JSON-RPC messages
+const log = (msg) => process.stderr.write(`[gemini-bridge] ${msg}\n`);
 
 // --- JSON-RPC helpers ---
 
@@ -51,6 +72,37 @@ function sendResult(id, result) {
 
 function sendError(id, code, message) {
   send({ jsonrpc: "2.0", id: id ?? null, error: { code, message } });
+}
+
+// --- Extract text from Gemini response ---
+// Returns { text } on success, { blocked, reason } if safety filter triggered.
+
+function extractResponse(json) {
+  const candidate = json.candidates?.[0];
+
+  // Safety filter: candidate present but content missing, or finish reason is SAFETY
+  if (candidate) {
+    const finishReason = candidate.finishReason;
+    if (finishReason === "SAFETY" || (!candidate.content && finishReason)) {
+      const ratings = candidate.safetyRatings
+        ?.filter(r => r.blocked)
+        .map(r => r.category.replace("HARM_CATEGORY_", ""))
+        .join(", ");
+      const reason = ratings ? `blocked categories: ${ratings}` : `finish reason: ${finishReason}`;
+      return { blocked: true, reason };
+    }
+  }
+
+  // Prompt itself blocked (no candidates returned)
+  if (!candidate) {
+    const feedback = json.promptFeedback;
+    if (feedback?.blockReason) {
+      return { blocked: true, reason: `prompt blocked: ${feedback.blockReason}` };
+    }
+  }
+
+  const text = candidate?.content?.parts?.[0]?.text ?? "No response.";
+  return { text };
 }
 
 // --- Gemini API call with fallback ---
@@ -78,27 +130,34 @@ async function callGemini(prompt) {
 
       // Quota – try next model
       if (res.status === 429) {
-        process.stderr.write(`[gemini-bridge] ${model} → quota, trying next...\n`);
+        log(`${model} → quota, trying next...`);
         lastError = `${model}: quota exceeded`;
         continue;
       }
 
       if (!res.ok) {
-        process.stderr.write(`[gemini-bridge] ${model} → HTTP ${res.status}, trying next...\n`);
+        log(`${model} → HTTP ${res.status}, trying next...`);
         lastError = `${model}: HTTP ${res.status} – ${json.error?.message || res.statusText}`;
         continue;
       }
 
-      const text = json.candidates?.[0]?.content?.parts?.[0]?.text ?? "No response.";
-      process.stderr.write(`[gemini-bridge] Used model: ${model}\n`);
-      return { text, model };
+      const result = extractResponse(json);
+
+      if (result.blocked) {
+        // Safety block is definitive – no point trying other models
+        log(`${model} → response blocked (${result.reason})`);
+        return { text: `[Gemini blocked this response – ${result.reason}]`, model };
+      }
+
+      log(`Used model: ${model}`);
+      return { text: result.text, model };
 
     } catch (err) {
       if (err.name === "AbortError") {
-        process.stderr.write(`[gemini-bridge] ${model} → timeout (${FETCH_TIMEOUT_MS}ms)\n`);
+        log(`${model} → timeout (${FETCH_TIMEOUT_MS}ms)`);
         lastError = `${model}: timeout`;
       } else {
-        process.stderr.write(`[gemini-bridge] ${model} → network error: ${err.message}\n`);
+        log(`${model} → network error: ${err.message}`);
         lastError = `${model}: ${err.message}`;
       }
     } finally {
@@ -190,11 +249,11 @@ async function handleRequest(request) {
 let buffer = "";
 
 process.stdin.on("data", (chunk) => {
-  buffer += chunk.toString();
+  buffer += chunk.toString("utf8");
 
   // Defensive: prevent unbounded growth of input buffer (potential DoS).
   if (Buffer.byteLength(buffer, "utf8") > MAX_STDIN_BUFFER_BYTES) {
-    process.stderr.write("[gemini-bridge] ERROR: stdin buffer exceeded maximum allowed size, dropping input.\n");
+    log("ERROR: stdin buffer exceeded maximum allowed size, dropping input.");
     sendError(null, -32000, "Input too large");
     buffer = "";
     return;
@@ -229,5 +288,5 @@ process.stdin.on("end", () => process.exit(0));
 
 // Prevent crash on unhandled rejection
 process.on("unhandledRejection", (reason) => {
-  process.stderr.write(`[gemini-bridge] UnhandledRejection: ${reason}\n`);
+  log(`UnhandledRejection: ${reason}`);
 });

@@ -1,91 +1,161 @@
+#!/usr/bin/env node
+
 /**
- * List and test Gemini models
- * Lists all available models from API and tests accessibility/response functionality
+ * Gemini Model Tester
+ *
+ * Usage:
+ *   node models.js [API_KEY]           – list & test all models
+ *   node models.js [API_KEY] --setup   – write working models to models.json
+ *                                        (ordered: OK by context size desc, then QUOTA, errors excluded)
+ *
+ * API key can also be provided via GEMINI_API_KEY environment variable.
+ *
+ * Only models supporting "generateContent" are listed (excludes TTS, vision-only, robotics, etc.)
  */
 
-const BASE_URL = "https://generativelanguage.googleapis.com/v1beta/";
-const PROMPT   = "Answer in one sentence: What model are you?";
-const MAX_DETAIL_LENGTH = 80;
+const fs   = require("fs");
+const path = require("path");
 
-async function listModels(apiKey) {
+const BASE_URL       = "https://generativelanguage.googleapis.com/v1beta/";
+const MODELS_JSON    = path.join(__dirname, "models.json");
+const TEST_PROMPT    = "Reply with your model name only, nothing else.";
+const REQUEST_DELAY  = 400; // ms between requests to avoid rate limiting
+const DETAIL_MAX_LEN = 40;
+
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+const pad      = (s, n) => String(s).padEnd(n);
+const truncate = (s, n = DETAIL_MAX_LEN) => s.length > n ? s.slice(0, n - 3) + "..." : s;
+const sleep    = (ms) => new Promise(r => setTimeout(r, ms));
+
+// ---------------------------------------------------------------------------
+// API calls
+// ---------------------------------------------------------------------------
+
+async function fetchModels(apiKey) {
   const url = `${BASE_URL}models?key=${apiKey}`;
-
   try {
-    const response = await fetch(url);
-    const data = await response.json();
-
-    if (data.models) {
-      const models = data.models.map(m => m.name.replace('models/', ''));
-      return models;
-    } else {
-      console.log("No models found. Response:", data);
+    const res  = await fetch(url);
+    const data = await res.json();
+    if (!res.ok) {
+      console.error(`ERROR fetching model list: HTTP ${res.status} – ${data.error?.message || res.statusText}`);
       return [];
     }
-  } catch (error) {
-    console.error("Error listing models:", error);
+    return (data.models || [])
+      .filter(m => (m.supportedGenerationMethods || []).includes("generateContent"))
+      .map(m => ({
+        name:             m.name.replace("models/", ""),
+        inputTokenLimit:  m.inputTokenLimit  || 0,
+        outputTokenLimit: m.outputTokenLimit || 0,
+      }));
+  } catch (err) {
+    console.error(`ERROR fetching model list: ${err.message}`);
     return [];
   }
 }
 
-async function testModel(model, apiKey) {
-  const url = `${BASE_URL}models/${model}:generateContent?key=${apiKey}`;
+async function testModel(name, apiKey) {
+  const url = `${BASE_URL}models/${name}:generateContent?key=${apiKey}`;
   try {
-    const res = await fetch(url, {
-      method: "POST",
+    const res  = await fetch(url, {
+      method:  "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ contents: [{ parts: [{ text: PROMPT }] }] }),
+      body:    JSON.stringify({ contents: [{ parts: [{ text: TEST_PROMPT }] }] }),
     });
-
     const json = await res.json();
 
     if (res.status === 429) {
-      const reason = json.error?.message || "quota exceeded";
-      return { status: "QUOTA", detail: reason };
+      return { status: "QUOTA", detail: json.error?.message || "quota exceeded" };
     }
-
     if (!res.ok) {
       return { status: "ERROR", detail: `HTTP ${res.status}: ${json.error?.message || res.statusText}` };
     }
 
-    const text = json.candidates?.[0]?.content?.parts?.[0]?.text ?? "(empty response)";
-    return { status: "OK", detail: text.trim().slice(0, 120) };
+    const text = json.candidates?.[0]?.content?.parts?.[0]?.text ?? "(empty)";
+    return { status: "OK", detail: text.trim() };
 
   } catch (err) {
     return { status: "NETWORK", detail: err.message };
   }
 }
 
+// ---------------------------------------------------------------------------
+// Setup: write working models to models.json
+// ---------------------------------------------------------------------------
+
+function writeModelsJson(results) {
+  const order  = { OK: 0, QUOTA: 1 };
+  const sorted = [...results]
+    .filter(r => r.status === "OK" || r.status === "QUOTA")
+    .sort((a, b) => {
+      const oa = order[a.status] ?? 2;
+      const ob = order[b.status] ?? 2;
+      if (oa !== ob) return oa - ob;
+      return (b.inputTokenLimit || 0) - (a.inputTokenLimit || 0);
+    });
+
+  const names      = sorted.map(r => r.name);
+  const okCount    = sorted.filter(r => r.status === "OK").length;
+  const quotaCount = sorted.filter(r => r.status === "QUOTA").length;
+
+  fs.writeFileSync(MODELS_JSON, JSON.stringify(names, null, 2) + "\n", "utf8");
+  console.log(`\nmodels.json updated: ${names.length} models (OK: ${okCount}, QUOTA: ${quotaCount}).`);
+  console.log(`Path: ${MODELS_JSON}`);
+}
+
+// ---------------------------------------------------------------------------
+// Main
+// ---------------------------------------------------------------------------
+
 async function main() {
-  // Accept API key from CLI argument or environment variable
-  const apiKey = process.argv[2] || process.env.GEMINI_API_KEY;
+  const args    = process.argv.slice(2);
+  const doSetup = args.includes("--setup");
+  const apiKey  = args.find(a => !a.startsWith("--")) || process.env.GEMINI_API_KEY;
+
   if (!apiKey) {
-    console.error("ERROR: API key not provided. Set GEMINI_API_KEY environment variable or pass as CLI argument.");
-    console.error("Usage: node models.js [API_KEY]");
+    console.error("ERROR: API key not provided. Set GEMINI_API_KEY or pass as CLI argument.");
+    console.error("Usage: node models.js [API_KEY] [--setup]");
     process.exit(1);
   }
 
-  const models = await listModels(apiKey);
-
-  console.log(`Found ${models.length} models.`);
+  console.log("Fetching model list...");
+  const models = await fetchModels(apiKey);
 
   if (models.length === 0) {
-    console.log("No models to test.");
+    console.log("No models found.");
     return;
   }
 
-  console.log("🧪 Testing accessibility...");
+  models.sort((a, b) => b.inputTokenLimit - a.inputTokenLimit);
+  console.log(`Found ${models.length} models supporting generateContent.\n`);
 
-  const pad = (s, n) => s.padEnd(n);
-  const truncate = (s, maxLen = MAX_DETAIL_LENGTH) => s.length > maxLen ? s.substring(0, maxLen - 3) + "..." : s;
+  console.log(`${"MODEL".padEnd(40)} ${"STATUS".padEnd(8)} DETAIL`);
+  console.log("-".repeat(80));
+
+  const results = [];
 
   for (const model of models) {
-    const result = await testModel(model, apiKey);
-    const icon = result.status === "OK" ? "✅" : result.status === "QUOTA" ? "⚠️ " : "❌";
-    console.log(`${icon} ${pad(model, 38)} ${pad(result.status, 8)} ${truncate(result.detail)}`);
-    // Small pause to not fire requests all at once
-    await new Promise(r => setTimeout(r, 400));
+    const { status, detail } = await testModel(model.name, apiKey);
+    results.push({ ...model, status, detail });
+    console.log(`${pad(model.name, 40)} ${pad(status, 8)} ${truncate(detail)}`);
+    await sleep(REQUEST_DELAY);
   }
-  console.log("✅ Done.");
+
+  console.log("-".repeat(80));
+
+  const ok    = results.filter(r => r.status === "OK").length;
+  const quota = results.filter(r => r.status === "QUOTA").length;
+  const err   = results.length - ok - quota;
+  console.log(`Summary: OK: ${ok}  QUOTA: ${quota}  ERROR/NETWORK: ${err}`);
+
+  if (doSetup) {
+    writeModelsJson(results);
+  }
 }
 
-main().catch(console.error);
+main().catch(err => {
+  console.error(`Fatal error: ${err.message}`);
+  process.exit(1);
+});

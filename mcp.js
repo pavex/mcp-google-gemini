@@ -1,10 +1,22 @@
 #!/usr/bin/env node
 
 /**
- * MCP Server – Gemini Bridge v1.5.0
+ * MCP Server – Gemini Bridge v1.7.0
  * Simple bridge for calling Gemini API via MCP protocol (stdio/JSON-RPC 2.0)
  * Automatic fallback on quota error (429).
  * Models loaded from models.json (plain array of model name strings).
+ *
+ * v1.6.0: Added gemini_status tool — health check without throwing.
+ * v1.7.0: ask_gemini always returns structured JSON { ok, text, model } or
+ *         { ok, error, retry } — never throws isError. Caller can check ok:false
+ *         without wasting tokens on gemini_status round-trip.
+ *
+ * Error types returned in { error } field:
+ *   "quota"   — all models quota exceeded         → retry: false (wait for reset)
+ *   "blocked" — safety filter                     → retry: false
+ *   "timeout" — network timeout                   → retry: true
+ *   "network" — fetch/network error               → retry: true
+ *   "http"    — unexpected HTTP status            → retry: false
  */
 
 const fs   = require("fs");
@@ -19,20 +31,15 @@ if (!API_KEY) {
   process.exit(1);
 }
 
-// Network timeouts (defensive): if Gemini stops responding we don't hang forever.
-// Configurable via env var: GEMINI_FETCH_TIMEOUT_MS (milliseconds)
-const FETCH_TIMEOUT_MS = Number(process.env.GEMINI_FETCH_TIMEOUT_MS) || 30_000;
-
-// Input buffer limits (defensive): protect against unbounded stdin growth.
-// Configurable via env var: GEMINI_MAX_STDIN_BUFFER_BYTES
-const MAX_STDIN_BUFFER_BYTES = Number(process.env.GEMINI_MAX_STDIN_BUFFER_BYTES) || 1_000_000; // ~1MB
+const FETCH_TIMEOUT_MS       = Number(process.env.GEMINI_FETCH_TIMEOUT_MS)       || 30_000;
+const MAX_STDIN_BUFFER_BYTES = Number(process.env.GEMINI_MAX_STDIN_BUFFER_BYTES) || 1_000_000;
 
 // --- Load models from models.json ---
 
 function loadModels() {
   const modelsPath = path.join(__dirname, "models.json");
   try {
-    const raw = fs.readFileSync(modelsPath, "utf8");
+    const raw  = fs.readFileSync(modelsPath, "utf8");
     const list = JSON.parse(raw);
     if (!Array.isArray(list) || list.length === 0) {
       throw new Error("models.json must be a non-empty array of model name strings.");
@@ -53,11 +60,10 @@ function loadModels() {
 const MODELS = loadModels();
 
 const SERVER_NAME      = "gemini-bridge";
-const SERVER_VERSION   = "1.5.0";
+const SERVER_VERSION   = "1.7.0";
 const PROTOCOL_VERSION = "2024-11-05";
 const BASE_URL         = "https://generativelanguage.googleapis.com/v1beta/";
 
-// Dedicated log helper – keeps stdout clean for JSON-RPC messages
 const log = (msg) => process.stderr.write(`[gemini-bridge] ${msg}\n`);
 
 // --- JSON-RPC helpers ---
@@ -75,12 +81,10 @@ function sendError(id, code, message) {
 }
 
 // --- Extract text from Gemini response ---
-// Returns { text } on success, { blocked, reason } if safety filter triggered.
 
 function extractResponse(json) {
   const candidate = json.candidates?.[0];
 
-  // Safety filter: candidate present but content missing, or finish reason is SAFETY
   if (candidate) {
     const finishReason = candidate.finishReason;
     if (finishReason === "SAFETY" || (!candidate.content && finishReason)) {
@@ -93,7 +97,6 @@ function extractResponse(json) {
     }
   }
 
-  // Prompt itself blocked (no candidates returned)
   if (!candidate) {
     const feedback = json.promptFeedback;
     if (feedback?.blockReason) {
@@ -105,81 +108,143 @@ function extractResponse(json) {
   return { text };
 }
 
+// --- Single model probe (for gemini_status) ---
+// Returns { ok, model, error } — never throws.
+
+async function probeModel(model) {
+  const url        = `${BASE_URL}models/${model}:generateContent?key=${API_KEY}`;
+  const controller = new AbortController();
+  const timeout    = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
+
+  try {
+    const res  = await fetch(url, {
+      method:  "POST",
+      headers: { "Content-Type": "application/json" },
+      body:    JSON.stringify({ contents: [{ parts: [{ text: "Hi" }] }] }),
+      signal:  controller.signal
+    });
+    const json = await res.json();
+
+    if (res.status === 429) return { ok: false, model, error: "quota exceeded" };
+    if (!res.ok)            return { ok: false, model, error: `HTTP ${res.status}` };
+
+    const result = extractResponse(json);
+    if (result.blocked) return { ok: false, model, error: `blocked: ${result.reason}` };
+
+    return { ok: true, model };
+
+  } catch (err) {
+    return { ok: false, model, error: err.name === "AbortError" ? `timeout` : err.message };
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
 // --- Gemini API call with fallback ---
+// Returns structured result — NEVER throws.
+// { ok: true,  text, model }
+// { ok: false, error, retry }
 
 async function callGemini(prompt) {
-  let lastError = null;
+  let quotaCount   = 0;
+  let lastError    = "unknown";
+  let lastRetry    = false;
 
   for (const model of MODELS) {
-    const url = `${BASE_URL}models/${model}:generateContent?key=${API_KEY}`;
-
+    const url        = `${BASE_URL}models/${model}:generateContent?key=${API_KEY}`;
     const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
+    const timeout    = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
 
     try {
-      const res = await fetch(url, {
-        method: "POST",
+      const res  = await fetch(url, {
+        method:  "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          contents: [{ parts: [{ text: prompt }] }]
-        }),
-        signal: controller.signal
+        body:    JSON.stringify({ contents: [{ parts: [{ text: prompt }] }] }),
+        signal:  controller.signal
       });
-
       const json = await res.json();
 
-      // Quota – try next model
       if (res.status === 429) {
         log(`${model} → quota, trying next...`);
-        lastError = `${model}: quota exceeded`;
+        quotaCount++;
+        lastError = "quota";
+        lastRetry = false;
         continue;
       }
 
       if (!res.ok) {
         log(`${model} → HTTP ${res.status}, trying next...`);
-        lastError = `${model}: HTTP ${res.status} – ${json.error?.message || res.statusText}`;
+        lastError = `http:${res.status}`;
+        lastRetry = false;
         continue;
       }
 
       const result = extractResponse(json);
 
       if (result.blocked) {
-        // Safety block is definitive – no point trying other models
         log(`${model} → response blocked (${result.reason})`);
-        return { text: `[Gemini blocked this response – ${result.reason}]`, model };
+        // Safety block is definitive — no point trying other models
+        return { ok: false, error: "blocked", detail: result.reason, retry: false };
       }
 
       log(`Used model: ${model}`);
-      return { text: result.text, model };
+      return { ok: true, text: result.text, model };
 
     } catch (err) {
       if (err.name === "AbortError") {
         log(`${model} → timeout (${FETCH_TIMEOUT_MS}ms)`);
-        lastError = `${model}: timeout`;
+        lastError = "timeout";
+        lastRetry = true;
       } else {
         log(`${model} → network error: ${err.message}`);
-        lastError = `${model}: ${err.message}`;
+        lastError = "network";
+        lastRetry = true;
       }
     } finally {
       clearTimeout(timeout);
     }
   }
 
-  throw new Error(`All models failed. Last error: ${lastError}`);
+  // All models failed — determine best error type
+  const error = quotaCount === MODELS.length ? "quota" : lastError;
+  const retry = lastRetry && quotaCount < MODELS.length;
+  log(`All models failed. error=${error} retry=${retry}`);
+  return { ok: false, error, retry };
 }
 
-// --- MCP tool definition ---
+// --- MCP tool definitions ---
 
 const TOOLS = [
   {
     name: "ask_gemini",
-    description: "Asks a question to the Gemini AI model and returns its response. Automatically switches to backup model on quota error.",
+    description: [
+      "Asks a question to the Gemini AI model. Always returns structured JSON:",
+      "  { ok: true,  text: '...', model: '...' }  — success",
+      "  { ok: false, error: 'quota',   retry: false } — quota exhausted, wait for reset",
+      "  { ok: false, error: 'blocked', retry: false } — safety filter",
+      "  { ok: false, error: 'timeout', retry: true  } — network timeout, can retry",
+      "  { ok: false, error: 'network', retry: true  } — network error, can retry",
+      "Never throws. Check ok before using text."
+    ].join("\n"),
     inputSchema: {
       type: "object",
       properties: {
         prompt: { type: "string", description: "Text of the question or instruction for Gemini." }
       },
       required: ["prompt"]
+    }
+  },
+  {
+    name: "gemini_status",
+    description: "Health check — tests first N models and returns their availability status. Probing stops at first OK model.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        limit: {
+          type: "integer",
+          description: "How many models to probe (default: 3). Probing stops at first OK model."
+        }
+      }
     }
   }
 ];
@@ -194,8 +259,8 @@ async function handleRequest(request) {
     case "initialize":
       sendResult(id, {
         protocolVersion: PROTOCOL_VERSION,
-        capabilities: { tools: {} },
-        serverInfo: { name: SERVER_NAME, version: SERVER_VERSION }
+        capabilities:    { tools: {} },
+        serverInfo:      { name: SERVER_NAME, version: SERVER_VERSION }
       });
       break;
 
@@ -206,35 +271,54 @@ async function handleRequest(request) {
     case "tools/call": {
       const toolName = params?.name;
 
-      if (toolName !== "ask_gemini") {
-        sendError(id, -32601, `Unknown tool: ${toolName}`);
+      // ---- ask_gemini ----
+      if (toolName === "ask_gemini") {
+        const prompt = params?.arguments?.prompt;
+
+        if (!prompt || typeof prompt !== "string") {
+          sendError(id, -32602, "Parameter 'prompt' is required and must be a string.");
+          break;
+        }
+
+        const result = await callGemini(prompt);
+        sendResult(id, {
+          content: [{ type: "text", text: JSON.stringify(result) }]
+        });
         break;
       }
 
-      const prompt = params?.arguments?.prompt;
+      // ---- gemini_status ----
+      if (toolName === "gemini_status") {
+        const limit   = Math.min(Math.max(1, Number(params?.arguments?.limit) || 3), MODELS.length);
+        const results = [];
+        let firstOk   = null;
 
-      if (!prompt || typeof prompt !== "string") {
-        sendError(id, -32602, "Parameter 'prompt' is required and must be a string.");
+        for (let i = 0; i < limit; i++) {
+          const probe = await probeModel(MODELS[i]);
+          results.push(probe);
+          if (probe.ok && !firstOk) {
+            firstOk = probe.model;
+            break;
+          }
+        }
+
+        const available = firstOk !== null;
+        const summary   = available
+          ? `OK — first available model: ${firstOk}`
+          : `All ${results.length} probed model(s) unavailable (quota or error)`;
+
+        log(`gemini_status: ${summary}`);
+        sendResult(id, {
+          content: [{ type: "text", text: JSON.stringify({ available, summary, probed: results, total_models: MODELS.length }) }]
+        });
         break;
       }
 
-      try {
-        const { text, model } = await callGemini(prompt);
-        sendResult(id, {
-          content: [{ type: "text", text }],
-          _meta: { model } // model info for debugging
-        });
-      } catch (err) {
-        sendResult(id, {
-          content: [{ type: "text", text: `Gemini API error: ${err.message}` }],
-          isError: true
-        });
-      }
+      sendError(id, -32601, `Unknown tool: ${toolName}`);
       break;
     }
 
     case "notifications/initialized":
-      // Notification – no response sent
       break;
 
     default:
@@ -244,14 +328,13 @@ async function handleRequest(request) {
   }
 }
 
-// --- Stdin listener (newline-delimited JSON) ---
+// --- Stdin listener ---
 
 let buffer = "";
 
 process.stdin.on("data", (chunk) => {
   buffer += chunk.toString("utf8");
 
-  // Defensive: prevent unbounded growth of input buffer (potential DoS).
   if (Buffer.byteLength(buffer, "utf8") > MAX_STDIN_BUFFER_BYTES) {
     log("ERROR: stdin buffer exceeded maximum allowed size, dropping input.");
     sendError(null, -32000, "Input too large");
@@ -260,7 +343,7 @@ process.stdin.on("data", (chunk) => {
   }
 
   const lines = buffer.split("\n");
-  buffer = lines.pop(); // last incomplete fragment
+  buffer = lines.pop();
 
   for (const line of lines) {
     const trimmed = line.trim();
@@ -283,10 +366,8 @@ process.stdin.on("data", (chunk) => {
   }
 });
 
-// Graceful shutdown
 process.stdin.on("end", () => process.exit(0));
 
-// Prevent crash on unhandled rejection
 process.on("unhandledRejection", (reason) => {
   log(`UnhandledRejection: ${reason}`);
 });

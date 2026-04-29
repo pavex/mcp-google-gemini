@@ -1,4 +1,4 @@
-# Google Gemini MCP Server — Smart Model Fallback for Claude Desktop
+# Google Gemini — Smart Model Fallback for Claude Desktop
 
 A lightweight MCP (Model Context Protocol) server that connects **Claude Desktop** to the **Google Gemini API**. Automatically selects the best available Gemini model using a tier-based fallback strategy with intelligent quota tracking — so your AI tools keep working even when individual models hit rate limits.
 

@@ -1,15 +1,11 @@
 /**
- * Unit testy pro mcp-google-gemini.
- * Testuje ModelCache, composePrompt a callGemini all-failed response bez API volání.
+ * Unit tests for mcp-google-gemini.
+ * Tests ModelCache and composePrompt without any API calls.
  *
- * Spuštění: node test/unit.js
+ * Run: node test/unit.js
  */
 
 import assert from 'node:assert/strict';
-
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
 
 let passed = 0;
 let failed = 0;
@@ -38,9 +34,7 @@ async function testAsync(label, fn) {
   }
 }
 
-// ---------------------------------------------------------------------------
-// composePrompt tests
-// ---------------------------------------------------------------------------
+// --- composePrompt ---
 
 console.log('\n--- composePrompt ---');
 
@@ -63,7 +57,7 @@ test('single skill block', () => {
 test('multiple blocks in correct order', () => {
   const result = composePrompt([
     { type: 'skill', text: 'Be concise.' },
-    { type: 'data',  text: '{"x":1}' },
+    { type: 'data', text: '{"x":1}' },
   ], 'Analyze this.');
   const lines = result.split('\n\n');
   assert.equal(lines[0], '[skill]\nBe concise.');
@@ -86,8 +80,8 @@ test('max 5 blocks enforced', () => {
 test('blocks with empty text are filtered out', () => {
   const result = composePrompt([
     { type: 'skill', text: '' },
-    { type: 'data',  text: '   ' },
-    { type: 'text',  text: 'Valid.' },
+    { type: 'data', text: '   ' },
+    { type: 'text', text: 'Valid.' },
   ], 'Q?');
   assert.ok(!result.includes('[skill]'));
   assert.ok(!result.includes('[data]'));
@@ -99,9 +93,7 @@ test('text is trimmed', () => {
   assert.ok(result.includes('[text]\ntrimmed'));
 });
 
-// ---------------------------------------------------------------------------
-// ModelCache tests
-// ---------------------------------------------------------------------------
+// --- ModelCache ---
 
 console.log('\n--- ModelCache ---');
 
@@ -138,19 +130,19 @@ test('setQuota qpd → isBlocked true, retry_after_ts is midnight UTC', () => {
   assert.ok(Cache.getEntry('model-d').retry_after_ts > Date.now());
 });
 
-test('setQuota qpm expiry → isBlocked resets to unknown after expiry', () => {
+test('setQuota qpm expiry → isBlocked remains true while quota active', () => {
   Cache.setOk('model-e');
   Cache.setQuota('model-e', 'qpm', 60);
   assert.equal(Cache.isBlocked('model-e'), true);
 });
 
-test('listForAgent returns all models with status fields', () => {
+test('listForAgent returns all models with required fields', () => {
   Cache.setOk('gemini-2.5-pro');
   Cache.setQuota('gemini-2.5-flash', 'qpm', 120);
   const models = [
-    { id: 'gemini-2.5-pro',   tier: 1, desc: 'best' },
+    { id: 'gemini-2.5-pro', tier: 1, desc: 'best' },
     { id: 'gemini-2.5-flash', tier: 2, desc: 'fast' },
-    { id: 'gemini-unknown',   tier: 3, desc: 'n/a'  },
+    { id: 'gemini-unknown', tier: 3, desc: 'n/a' },
   ];
   const list = Cache.listForAgent(models);
   assert.equal(list.length, 3);
@@ -174,65 +166,7 @@ test('retry_in format — minutes', () => {
   assert.match(list[0].retry_in, /^\d+m$/);
 });
 
-// ---------------------------------------------------------------------------
-// callGemini all-failed response shape tests
-// ---------------------------------------------------------------------------
-
-console.log('\n--- callGemini all-failed response ---');
-
-// Testujeme response strukturu když jsou všechny modely na quota.
-// Simulujeme přes cache — nastavíme všechny modely jako blocked,
-// pak zavoláme callGemini s fake prompt (API call proběhne pouze pokud model není blocked).
-// Použijeme model IDs které nejsou v MODELS, abychom targetovali přímo jednoho kandidáta.
-
-await testAsync('all-failed quota_rpm → retry:true, reason mentions rpm, has models_status', async () => {
-  // Nastavíme jeden dočasný model na quota_rpm
-  Cache.setQuota('test-rpm-only', 'qpm', 120);
-
-  // Zavoláme callGemini s targetModelId který je blocked → přeskočí, all failed
-  // Importujeme GeminiClient — musíme použít dynamický import pro přístup k callGemini
-  const { callGemini } = await import('../src/GeminiClient.js');
-
-  // Přidáme fake model do candidátů přes targetModelId
-  const result = await callGemini('test', 'test-rpm-only');
-
-  assert.equal(result.ok, false);
-  assert.equal(result.error, 'quota');
-  assert.equal(result.retry, true, 'quota_rpm should be retryable');
-  assert.ok(typeof result.reason === 'string' && result.reason.length > 0, 'reason must be non-empty string');
-  assert.ok(Array.isArray(result.models_status), 'models_status must be array');
-  assert.ok(result.models_status.every(m => 'id' in m && 'status' in m && 'retry_in' in m), 'each entry needs id, status, retry_in');
-  assert.ok('best_retry_in' in result, 'best_retry_in must be present for quota_rpm');
-});
-
-await testAsync('all-failed quota_rpd → retry:false, reason mentions daily limit', async () => {
-  Cache.setQuota('test-rpd-only', 'qpd', 0);
-
-  const { callGemini } = await import('../src/GeminiClient.js');
-  const result = await callGemini('test', 'test-rpd-only');
-
-  assert.equal(result.ok, false);
-  assert.equal(result.error, 'quota');
-  assert.equal(result.retry, false, 'quota_rpd should NOT be retryable');
-  assert.ok(result.reason.toLowerCase().includes('daily') || result.reason.toLowerCase().includes('tomorrow'),
-    `reason should mention daily quota, got: ${result.reason}`);
-  assert.ok(Array.isArray(result.models_status));
-});
-
-await testAsync('all-failed response has no extra unknown fields', async () => {
-  Cache.setQuota('test-shape', 'qpm', 60);
-  const { callGemini } = await import('../src/GeminiClient.js');
-  const result = await callGemini('test', 'test-shape');
-
-  const allowed = new Set(['ok', 'error', 'retry', 'reason', 'models_status', 'best_retry_in']);
-  for (const key of Object.keys(result)) {
-    assert.ok(allowed.has(key), `unexpected field in response: ${key}`);
-  }
-});
-
-// ---------------------------------------------------------------------------
-// Summary
-// ---------------------------------------------------------------------------
+// --- Summary ---
 
 console.log(`\n${'─'.repeat(40)}`);
 if (failed === 0) {

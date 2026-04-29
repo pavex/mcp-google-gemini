@@ -1,8 +1,8 @@
 // Tools/GeminiStatus.js
 
-import { z }           from 'zod';
+import { z } from 'zod';
 import { MODELS, probeModel } from '../GeminiClient.js';
-import { listForAgent }       from '../ModelCache.js';
+import { listForAgent } from '../ModelCache.js';
 
 export const GeminiStatus = {
   name: 'gemini_status',
@@ -20,8 +20,8 @@ export const GeminiStatus = {
 
   async handler({ limit = 3 }) {
     const toProbe = MODELS.slice(0, Math.min(limit, MODELS.length));
-    const probed  = [];
-    let firstOk   = null;
+    const probed = [];
+    let firstOk = null;
 
     for (const model of toProbe) {
       const result = await probeModel(model.id);
@@ -33,7 +33,7 @@ export const GeminiStatus = {
     }
 
     const available = firstOk !== null;
-    const summary   = available
+    const summary = available
       ? `OK — first available: ${firstOk}`
       : `All ${probed.length} probed model(s) unavailable`;
 

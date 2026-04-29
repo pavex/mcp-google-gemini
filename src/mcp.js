@@ -1,22 +1,18 @@
 // mcp.js — entry point, mcp-google-gemini v2.0
 // SDK: @modelcontextprotocol/sdk
 
-import { Server }              from '@modelcontextprotocol/sdk/server/index.js';
+import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { CallToolRequestSchema, ListToolsRequestSchema } from '@modelcontextprotocol/sdk/types.js';
-import { zodToJsonSchema }     from 'zod-to-json-schema';
-import { z }                   from 'zod';
-import { Config }              from './Config.js';
-import { AskGemini }           from './Tools/AskGemini.js';
-import { ListModels }          from './Tools/ListModels.js';
-import { GeminiStatus }        from './Tools/GeminiStatus.js';
-
-// --- Tool registry ---
+import { zodToJsonSchema } from 'zod-to-json-schema';
+import { z } from 'zod';
+import { Config } from './Config.js';
+import { AskGemini } from './Tools/AskGemini.js';
+import { ListModels } from './Tools/ListModels.js';
+import { GeminiStatus } from './Tools/GeminiStatus.js';
 
 const ToolDefinitions = [AskGemini, ListModels, GeminiStatus];
 const handlers = new Map(ToolDefinitions.map(t => [t.name, t.handler.bind(t)]));
-
-// --- Server init ---
 
 const server = new Server(
   { name: Config.MCP_SERVER_NAME, version: Config.MCP_SERVER_VERSION },
@@ -25,7 +21,7 @@ const server = new Server(
 
 server.setRequestHandler(ListToolsRequestSchema, async () => ({
   tools: ToolDefinitions.map(t => ({
-    name:        t.name,
+    name: t.name,
     description: t.description,
     inputSchema: zodToJsonSchema(t.inputSchema),
   })),
@@ -49,7 +45,5 @@ server.setRequestHandler(CallToolRequestSchema, async (req) => {
     return { content: [{ type: 'text', text: msg }], isError: true };
   }
 });
-
-// --- Start ---
 
 await server.connect(new StdioServerTransport());

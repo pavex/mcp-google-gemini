@@ -1,7 +1,7 @@
 // Tools/AskGemini.js
 
-import { z }             from 'zod';
-import { callGemini }    from '../GeminiClient.js';
+import { z } from 'zod';
+import { callGemini } from '../GeminiClient.js';
 import { composePrompt } from '../Utils/composePrompt.js';
 
 export const AskGemini = {
@@ -28,7 +28,7 @@ export const AskGemini = {
 
   inputSchema: z.object({
     prompt: z.string().describe('The question or instruction for Gemini.'),
-    model:  z.string().optional().describe('Optional: specific model ID to use (e.g. "gemini-2.5-pro"). If omitted, best available model is selected automatically.'),
+    model: z.string().optional().describe('Optional: specific model ID to use (e.g. "gemini-2.5-pro"). If omitted, best available model is selected automatically.'),
     context: z.array(z.object({
       type: z.enum(['skill', 'data', 'text']).describe('"skill" = system instruction, "data" = JSON/context data, "text" = freeform text'),
       text: z.string(),
@@ -37,7 +37,7 @@ export const AskGemini = {
 
   async handler({ prompt, model, context }) {
     const composed = composePrompt(context, prompt);
-    const result   = await callGemini(composed, model ?? null);
+    const result = await callGemini(composed, model ?? null);
     return result;
   },
 };

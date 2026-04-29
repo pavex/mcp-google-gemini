@@ -1,137 +1,76 @@
-# Gemini Bridge – MCP Server for Claude Desktop
+# Google Gemini MCP Server — Smart Model Fallback for Claude Desktop
 
-A lightweight, zero-dependency MCP server that connects **Claude Desktop** with the **Google Gemini API**. Pure Node.js implementation with automatic model fallback on quota errors. Includes a standalone CLI chat client for direct conversations with Gemini.
+A lightweight MCP (Model Context Protocol) server that connects **Claude Desktop** to the **Google Gemini API**. Automatically selects the best available Gemini model using a tier-based fallback strategy with intelligent quota tracking — so your AI tools keep working even when individual models hit rate limits.
 
----
-
-## Table of Contents
-
-- [Features](#features)
-- [Requirements](#requirements)
-- [Installation](#installation)
-- [Model Configuration](#model-configuration-modelsjson)
-- [Claude Desktop Setup](#claude-desktop-setup)
-- [Usage](#usage)
-- [CLI Chat – chat.js](#cli-chat--chatjs)
-- [Environment Variables](#environment-variables)
-- [Project Files](#project-files)
+Built on `@modelcontextprotocol/sdk` with zero Gemini-specific dependencies (uses Node.js built-in `fetch`).
 
 ---
 
 ## Features
 
-- **Single tool** – `ask_gemini(prompt)` available directly in Claude conversations
-- **Automatic fallback** – switches to the next model in the chain on quota error (HTTP 429)
-- **Zero dependencies** – uses only built-in Node.js modules (`fs`, `path`, `fetch`)
-- **External model config** – fallback chain is managed via `models.json`, no code changes needed
-- **CLI chat client** – interactive multi-turn chat with Gemini directly in the terminal
-- **Low latency** – minimal overhead, fast startup
+- **3 MCP tools** — `ask_gemini`, `list_models`, `gemini_status`
+- **Smart model cache** — tracks quota (RPM/RPD), availability, and TTL per model in memory
+- **Quota-aware fallback** — reads `Retry-After` header and quota type (per-minute vs per-day), skips blocked models automatically
+- **Structured prompts** — optional `context[]` blocks (`skill` / `data` / `text`) prepended before the prompt
+- **Tier-based selection** — models ranked by tier; best available tier selected automatically on every call
+- **Configurable model list** — edit `dist/models.json` to add, remove, or re-rank models without rebuilding
+- **Zero Gemini deps** — uses built-in Node.js `fetch` (Node 18+)
 
 ---
 
 ## Requirements
 
 - Node.js 18+
-- Gemini API key from [Google AI Studio](https://aistudio.google.com/app/apikey)
+- Google Gemini API key — [Get one at Google AI Studio](https://aistudio.google.com/app/apikey)
 
 ---
 
-## Installation
+## Build
 
+The build script installs dependencies, compiles the bundle, copies `models.json` to `dist/`, runs the full test suite, and cleans up `node_modules`.
+
+**Windows:**
+```cmd
+build.cmd YOUR_GEMINI_API_KEY
+```
+
+**Linux / macOS:**
 ```bash
-git clone https://github.com/your-repo/mcp-google-gemini.git
-cd mcp-google-gemini
+chmod +x build.sh
+./build.sh YOUR_GEMINI_API_KEY
 ```
 
-No `npm install` needed – the project has zero dependencies.
-
----
-
-## Model Configuration (`models.json`)
-
-The `models.json` file contains a plain array of Gemini model names used as the fallback chain – ordered from most powerful to lightest:
-
-```json
-[
-  "gemini-2.5-flash",
-  "gemini-3-flash-preview",
-  "gemini-3.1-flash-lite-preview",
-  "gemini-2.5-flash-lite"
-]
+If `GEMINI_API_KEY` is already set in your environment, you can omit the argument:
+```cmd
+build.cmd
 ```
-
-The server tries models **left to right** and uses the first one that responds without error. If the file is missing or invalid, a built-in fallback list is used automatically.
-
-Both `mcp.js` and `chat.js` share the same `models.json` — configure once, works everywhere.
-
-### Updating the model list – `models.js`
-
-The `models.js` script fetches all available models from the Gemini API, tests each one, and optionally writes the results to `models.json`.
-
-#### List and test all models
-
 ```bash
-node models.js [API_KEY]
+./build.sh
 ```
 
-Prints a table of all available models with their status:
-
+After a successful build, `dist/` is fully self-contained:
 ```
-Fetching model list...
-Found 28 models.
-
-Testing models...
-
-MODEL                                    STATUS   DETAIL
---------------------------------------------------------------------------------
-gemini-2.5-flash                         OK       gemini-2.5-flash
-gemini-flash-latest                      OK       gemini-2.5-flash
-gemini-2.5-pro                           OK       gemini-2.5-pro
-gemini-3-flash-preview                   QUOTA    quota exceeded
-gemini-2.0-flash                         ERROR    HTTP 403: ...
---------------------------------------------------------------------------------
-Summary: OK: 7  QUOTA: 12  ERROR/NETWORK: 9
+dist/
+  mcp.js        — bundled server (single file, no node_modules needed)
+  models.json   — model tier configuration (safe to edit without rebuilding)
 ```
-
-Status codes:
-- `OK` – model is available and responding
-- `QUOTA` – model exists but free tier quota is exhausted
-- `ERROR` – model is not accessible (403, 400, etc.)
-- `NETWORK` – network or connection error
-
-#### Run setup (write results to `models.json`)
-
-```bash
-node models.js [API_KEY] --setup
-```
-
-Tests all models and writes the working ones to `models.json`:
-- **OK models** first, sorted by context window size (largest first)
-- **QUOTA models** appended after OK (available, just rate-limited)
-- **ERROR/NETWORK models** are excluded
-
-After running setup, **restart Claude Desktop** so the server picks up the updated model list.
 
 ---
 
 ## Claude Desktop Setup
 
-### Option 1 – Configuration file (recommended)
-
 Open the Claude Desktop configuration file:
-
 - **Windows**: `%APPDATA%\Claude\claude_desktop_config.json`
 - **macOS**: `~/Library/Application Support/Claude/claude_desktop_config.json`
-- **Linux**: `~/.config/Claude/claude_desktop_config.json`
 
-Add the `mcpServers` section:
+Add the following entry:
 
 ```json
 {
   "mcpServers": {
     "gemini-bridge": {
       "command": "node",
-      "args": ["C:/path/to/mcp-google-gemini/mcp.js"],
+      "args": ["C:/absolute/path/to/dist/mcp.js"],
       "env": {
         "GEMINI_API_KEY": "your_api_key_here"
       }
@@ -140,109 +79,95 @@ Add the `mcpServers` section:
 }
 ```
 
-### Option 2 – API key as CLI argument
+Restart Claude Desktop. All three tools will be available in every conversation.
+
+---
+
+## Model Configuration (`dist/models.json`)
+
+Models are ranked by `tier` — the server always picks the lowest available tier. Edit this file at any time without rebuilding:
 
 ```json
-{
-  "mcpServers": {
-    "gemini-bridge": {
-      "command": "node",
-      "args": ["C:/path/to/mcp-google-gemini/mcp.js", "your_api_key_here"]
-    }
-  }
-}
-```
-
-Save the file and **restart Claude Desktop**. The `ask_gemini` tool will be available in every conversation.
-
----
-
-## Usage
-
-Once configured, the `ask_gemini` tool is available automatically. Claude can invoke it internally, or you can request it explicitly:
-
-```
-Ask Gemini: what are the main differences between React and Vue?
-```
-
-```
-Use Gemini to research: what is the Model Context Protocol?
-```
-
-The server automatically uses the first working model from `models.json` and falls back to the next one on quota errors.
-
----
-
-## CLI Chat – `chat.js`
-
-A standalone interactive chat client for talking to Gemini directly in the terminal — no Claude Desktop required. Uses the same `models.json` configuration as `mcp.js`.
-
-### Starting the chat
-
-```bash
-node chat.js [API_KEY]
-```
-
-The API key can also be provided via the `GEMINI_API_KEY` environment variable:
-
-```bash
-set GEMINI_API_KEY=your_api_key_here
-node chat.js
-```
-
-### Example session
-
-```
-Gemini CLI Chat
-Models: gemini-2.5-flash (+27 fallbacks)
-Commands: /exit  /clear  /model
---------------------------------------------------
-You: What is the capital of Japan?
-Gemini: The capital of Japan is Tokyo.
-[gemini-2.5-flash]
-
-You: And what is its population?
-Gemini: Tokyo has a population of approximately 13.96 million in the city proper,
-        and around 37 million in the greater metropolitan area.
-[gemini-2.5-flash]
-
-You: /model
-[Active model: gemini-2.5-flash]
-
-You: /clear
-[History cleared]
-
-You: /exit
-Bye!
-```
-
-### How context works
-
-`chat.js` maintains a full **conversation history** for the entire session. Every message you send includes the complete history of the conversation, so Gemini can reference and build on everything said earlier — just like a natural chat.
-
-Internally, the history is a growing array of alternating `user` and `model` turns sent with each request:
-
-```
 [
-  { role: "user",  parts: [{ text: "What is the capital of Japan?" }] },
-  { role: "model", parts: [{ text: "The capital of Japan is Tokyo." }] },
-  { role: "user",  parts: [{ text: "And what is its population?" }] }   ← new message
+  { "id": "gemini-2.5-pro",        "tier": 1, "desc": "best reasoning, complex tasks" },
+  { "id": "gemini-2.5-flash",      "tier": 2, "desc": "fast, capable, balanced" },
+  { "id": "gemini-2.5-flash-lite", "tier": 3, "desc": "lightweight, high quota" },
+  { "id": "gemini-2.0-flash",      "tier": 4, "desc": "fallback, stable" }
 ]
 ```
 
-This means you can ask follow-up questions, refer to previous answers, and have multi-turn conversations without repeating context.
+To use a custom path: set `GEMINI_MODELS_PATH=/your/path/models.json` in the environment.
 
-### Commands
+---
 
-| Command | Description |
-|---|---|
-| `/exit` | Quit the chat |
-| `/clear` | Clear conversation history and start fresh |
-| `/model` | Show which Gemini model is currently active |
+## Tools
 
-### Model fallback
+### `ask_gemini`
 
-`chat.js` uses the same fallback logic as `mcp.js`: it tries models from `models.json` left to right and remembers the first one that works. On quota errors it automatically switches to the next model in the list. After each response, the active model name is displayed in brackets.
+Sends a prompt to Gemini. Automatically selects the best available model by tier, or uses the model you specify.
+
+| Parameter | Type | Description |
+|---|---|---|
+| `prompt` | string (required) | The question or instruction |
+| `model` | string (optional) | Override model ID, e.g. `"gemini-2.5-pro"` |
+| `context` | array (optional) | Structured context blocks, max 5 |
+
+**context block:**
+```json
+{ "type": "skill|data|text", "text": "..." }
+```
+
+Composed prompt format when context is provided:
+```
+[skill]
+You are a senior Node.js engineer.
+
+[data]
+{ "version": "2.0" }
+
+[prompt]
+Review this code for bugs.
+```
+
+**Response — always a JSON string in `content[0].text`:**
+```json
+{ "ok": true,  "text": "...", "model_used": "gemini-2.5-pro" }
+{ "ok": false, "error": "quota",   "retry": false, "best_retry_in": "43s" }
+{ "ok": false, "error": "blocked", "retry": false, "detail": "..." }
+{ "ok": false, "error": "timeout", "retry": true }
+```
+
+Always check `ok` before using `text`.
+
+---
+
+### `list_models`
+
+Returns the model list with current cache status. **No API calls made.**
+
+```json
+[
+  { "id": "gemini-2.5-pro",        "tier": 1, "status": "ok",        "retry_in": null },
+  { "id": "gemini-2.5-flash",      "tier": 2, "status": "quota_rpm", "retry_in": "43s" },
+  { "id": "gemini-2.5-flash-lite", "tier": 3, "status": "unknown",   "retry_in": null }
+]
+```
+
+**Status values:** `ok` | `quota_rpm` | `quota_rpd` | `error` | `unknown`
+
+Use this to decide which model to pass to `ask_gemini`.
+
+---
+
+### `gemini_status`
+
+Actively probes first N models and warms up the cache. Stops at the first successful model.
+
+| Parameter | Type | Description |
+|---|---|---|
+| `limit` | integer (optional) | Number of models to probe, default 3 |
+
+Use for debugging or cache warmup. For a quick overview without API calls, use `list_models` instead.
 
 ---
 
@@ -250,20 +175,53 @@ This means you can ask follow-up questions, refer to previous answers, and have 
 
 | Variable | Default | Description |
 |---|---|---|
-| `GEMINI_API_KEY` | – | API key (alternative to CLI argument) |
-| `GEMINI_FETCH_TIMEOUT_MS` | `30000` | Request timeout in milliseconds |
-| `GEMINI_MAX_STDIN_BUFFER_BYTES` | `1000000` | Max stdin buffer size for `mcp.js` (~1 MB) |
+| `GEMINI_API_KEY` | — | API key (required) |
+| `GEMINI_FETCH_TIMEOUT_MS` | `30000` | Per-request timeout in milliseconds |
+| `GEMINI_TTL_OK_MS` | `300000` | Cache TTL for healthy models (default 5 min) |
+| `GEMINI_MODELS_PATH` | `dist/models.json` | Custom path to `models.json` |
 
 ---
 
-## Project Files
+## Project Structure
 
-| File | Description |
-|---|---|
-| `mcp.js` | MCP server – main entry point for Claude Desktop |
-| `chat.js` | Interactive CLI chat client for direct Gemini conversations |
-| `models.js` | Utility script for listing, testing and updating models |
-| `models.json` | Fallback chain – model list shared by `mcp.js` and `chat.js` |
+```
+src/
+  mcp.js              — entry point (Server + StdioTransport)
+  Config.js           — API key, timeouts, TTL, models path
+  GeminiClient.js     — callGemini(), probeModel(), parse429()
+  ModelCache.js       — in-memory cache per model
+  Tools/
+    AskGemini.js
+    ListModels.js
+    GeminiStatus.js
+  Utils/
+    composePrompt.js
+dist/
+  mcp.js              — bundled output (esbuild, single file)
+  models.json         — model tier configuration
+models.json           — source of truth (copied to dist/ during build)
+test/
+  unit.js             — unit tests (ModelCache, composePrompt), no API calls
+  integration.js      — integration tests via stdio JSON-RPC
+```
+
+---
+
+## Running Tests
+
+```bash
+# Unit tests only (no API key needed)
+node test/unit.js
+
+# Integration tests against src/ (requires GEMINI_API_KEY)
+node test/integration.js src
+
+# Integration tests against dist/
+node test/integration.js dist
+
+# Full suite (same as npm test)
+npm test
+```
 
 ---
 

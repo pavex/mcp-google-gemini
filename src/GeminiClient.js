@@ -4,18 +4,25 @@ import { readFileSync } from 'node:fs';
 import { Config }       from './Config.js';
 import * as Cache       from './ModelCache.js';
 
-// --- Load models ---
+// --- Model list ---
+// Default model list embedded in code — no external file required.
+// Override: set GEMINI_MODELS_PATH to a JSON file with [{ id, tier, desc }].
 
-const FALLBACK_MODELS = [
+const DEFAULT_MODELS = [
+  { id: 'gemini-2.5-pro',        tier: 1, desc: 'best reasoning, complex tasks' },
   { id: 'gemini-2.5-flash',      tier: 2, desc: 'fast, capable, balanced' },
   { id: 'gemini-2.5-flash-lite', tier: 3, desc: 'lightweight, high quota' },
+  { id: 'gemini-2.0-flash',      tier: 4, desc: 'fallback, stable' },
 ];
 
-export function loadModels() {
+function loadModels() {
+  const customPath = process.env.GEMINI_MODELS_PATH;
+  if (!customPath) return DEFAULT_MODELS;
+
   try {
-    const raw  = readFileSync(Config.MODELS_PATH, 'utf8');
+    const raw  = readFileSync(customPath, 'utf8');
     const list = JSON.parse(raw);
-    if (!Array.isArray(list) || list.length === 0) throw new Error('models.json is empty or invalid.');
+    if (!Array.isArray(list) || list.length === 0) throw new Error('File is empty or not a JSON array.');
     // Supports both old (string[]) and new ({ id, tier, desc }[]) formats
     return list.map((m, i) =>
       typeof m === 'string'
@@ -23,8 +30,8 @@ export function loadModels() {
         : m
     );
   } catch (err) {
-    process.stderr.write(`[gemini-bridge] ERROR loading models.json (${Config.MODELS_PATH}): ${err.message} — using fallback list.\n`);
-    return FALLBACK_MODELS;
+    process.stderr.write(`[gemini-bridge] ERROR loading models from GEMINI_MODELS_PATH (${customPath}): ${err.message} — using defaults.\n`);
+    return DEFAULT_MODELS;
   }
 }
 
@@ -271,7 +278,7 @@ export async function callGemini(promptText, targetModelId = null, systemInstruc
 
       if (result.blocked) {
         log(`${model.id} → response blocked (${result.reason})`);
-        return { ok: false, error: 'blocked', detail: result.reason, retry: false };
+        return { ok: false, error: 'blocked', reason: result.reason, retry: false };
       }
 
       Cache.setOk(model.id);

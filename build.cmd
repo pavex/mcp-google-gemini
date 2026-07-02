@@ -12,35 +12,29 @@ if "%~1"=="" (
   set GEMINI_API_KEY=%~1
 )
 
-echo [1/5] Installing dependencies...
+echo [1/4] Installing dependencies...
 call npm install --no-audit --no-fund
 
-echo [2/5] Building dist/mcp.js...
+echo [2/4] Building dist/mcp.js...
 call npm run build
 if %errorlevel% neq 0 (
   echo ERROR: Build failed.
   exit /b %errorlevel%
 )
 
-echo [3/5] Verifying dist/models.json exists...
-if not exist dist\models.json (
-  echo ERROR: dist\models.json is missing.
-  exit /b 1
-)
-
-echo [4/5] Running tests...
+echo [3/4] Running tests...
 call npm test
 if %errorlevel% neq 0 (
   echo ERROR: Tests failed.
   exit /b %errorlevel%
 )
 
-echo [5/5] Cleaning up root node_modules...
+echo [4/4] Cleaning up root node_modules...
 if exist node_modules rd /s /q node_modules
 if exist package-lock.json del /f /q package-lock.json
 
 echo.
 echo Done! dist/ is self-contained:
-echo   dist/mcp.js      - bundled server
-echo   dist/models.json - model tier configuration (edit to customize)
+echo   dist/mcp.js  - bundled server
+echo   Note: model list is embedded in code. Set GEMINI_MODELS_PATH for custom models.
 endlocal

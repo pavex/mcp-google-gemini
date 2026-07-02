@@ -1,5 +1,7 @@
 // composePrompt.js — assembles context[] blocks and the prompt into a single string
 
+import { Config } from '../Config.js';
+
 const VALID_TYPES = ['skill', 'data', 'text'];
 const MAX_BLOCKS  = 5;
 
@@ -8,25 +10,29 @@ const MAX_BLOCKS  = 5;
  *
  * @param {Array<{type: string, text: string}>|undefined} context
  * @param {string} prompt
- * @returns {string}
+ * @returns {{ prompt: string, systemInstruction: string|undefined }}
  *
- * Output format (when context is provided):
- *   [skill]
- *   ...text...
+ * skill blocks are sent as native systemInstruction.
+ * data/text blocks are prepended to the user prompt as [type]\n...text... sections.
+ * Without context — returns { prompt } with the prompt string unchanged.
  *
- *   [data]
- *   ...text...
- *
- *   [prompt]
- *   ...prompt...
- *
- * Without context — returns the prompt string unchanged.
+ * @throws {RangeError} if prompt or any block text exceeds configured limits.
  */
 export function composePrompt(context, prompt) {
+  if (prompt.length > Config.MAX_PROMPT_CHARS) {
+    throw new RangeError(`prompt exceeds maximum length (${prompt.length} > ${Config.MAX_PROMPT_CHARS} chars).`);
+  }
+
   if (!context || context.length === 0) return { prompt };
 
   const systemBlocks = context.filter(b => b && b.type === 'skill' && typeof b.text === 'string' && b.text.trim());
   const otherBlocks  = context.filter(b => b && b.type !== 'skill' && typeof b.text === 'string' && b.text.trim());
+
+  for (const b of [...systemBlocks, ...otherBlocks]) {
+    if (b.text.length > Config.MAX_CONTEXT_BLOCK_CHARS) {
+      throw new RangeError(`context block of type "${b.type}" exceeds maximum length (${b.text.length} > ${Config.MAX_CONTEXT_BLOCK_CHARS} chars).`);
+    }
+  }
 
   const systemInstruction = systemBlocks.map(b => b.text.trim()).join('\n\n') || undefined;
 
@@ -44,3 +50,4 @@ export function composePrompt(context, prompt) {
     systemInstruction,
   };
 }
+

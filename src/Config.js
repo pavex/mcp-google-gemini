@@ -1,10 +1,5 @@
 // Config.js — central configuration for mcp-google-gemini v2.0
 
-import { dirname, join } from 'node:path';
-import { fileURLToPath } from 'node:url';
-
-const __dirname = dirname(fileURLToPath(import.meta.url));
-
 const API_KEY = process.argv[2] || process.env.GEMINI_API_KEY;
 
 export const Config = {
@@ -27,10 +22,11 @@ export const Config = {
   // ModelCache TTL
   TTL_OK_MS:        Number(process.env.GEMINI_TTL_OK_MS) || 300_000,  // 5 min
 
-  // Path to models.json — defaults to models.json next to the running script (dist/models.json).
-  // Override with GEMINI_MODELS_PATH env var if needed.
-  MODELS_PATH:      process.env.GEMINI_MODELS_PATH ?? join(__dirname, 'models.json'),
+  // Context size limits — enforced in composePrompt before API call
+  MAX_CONTEXT_BLOCK_CHARS: Number(process.env.GEMINI_MAX_CONTEXT_BLOCK_CHARS) || 100_000,
+  MAX_PROMPT_CHARS:        Number(process.env.GEMINI_MAX_PROMPT_CHARS)        || 200_000,
 
   MCP_SERVER_NAME:    'gemini-bridge',
   MCP_SERVER_VERSION: '2.0.0',
 };
+

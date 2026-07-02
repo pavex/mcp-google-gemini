@@ -6,6 +6,7 @@
  */
 
 import assert from 'node:assert/strict';
+const { Config } = await import('../src/Config.js');
 
 let passed = 0;
 let failed = 0;
@@ -96,6 +97,21 @@ test('blocks with empty text are filtered out', () => {
 test('text is trimmed', () => {
   const result = composePrompt([{ type: 'text', text: '  trimmed  ' }], 'Q?');
   assert.ok(result.prompt.includes('[text]\ntrimmed'));
+});
+
+test('prompt exceeding MAX_PROMPT_CHARS throws RangeError', () => {
+  const overlong = 'x'.repeat(Config.MAX_PROMPT_CHARS + 1);
+  assert.throws(() => composePrompt(undefined, overlong), RangeError);
+});
+
+test('context block exceeding MAX_CONTEXT_BLOCK_CHARS throws RangeError', () => {
+  const overlong = 'x'.repeat(Config.MAX_CONTEXT_BLOCK_CHARS + 1);
+  assert.throws(() => composePrompt([{ type: 'data', text: overlong }], 'Q?'), RangeError);
+});
+
+test('skill block exceeding MAX_CONTEXT_BLOCK_CHARS throws RangeError', () => {
+  const overlong = 'x'.repeat(Config.MAX_CONTEXT_BLOCK_CHARS + 1);
+  assert.throws(() => composePrompt([{ type: 'skill', text: overlong }], 'Q?'), RangeError);
 });
 
 // --- ModelCache ---

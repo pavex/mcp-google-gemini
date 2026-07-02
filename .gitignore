@@ -2,3 +2,4 @@
 .knowledge.md
 node_modules/
 dist/*.js
+dist/models.json

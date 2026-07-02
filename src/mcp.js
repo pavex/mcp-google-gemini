@@ -11,6 +11,8 @@ import { AskGemini } from './Tools/AskGemini.js';
 import { ListModels } from './Tools/ListModels.js';
 import { GeminiStatus } from './Tools/GeminiStatus.js';
 
+Config.validate();
+
 const ToolDefinitions = [AskGemini, ListModels, GeminiStatus];
 const handlers = new Map(ToolDefinitions.map(t => [t.name, t.handler.bind(t)]));
 

@@ -7,17 +7,19 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 
 const API_KEY = process.argv[2] || process.env.GEMINI_API_KEY;
 
-if (!API_KEY) {
-  process.stderr.write('[gemini-bridge] ERROR: API key not provided. Set GEMINI_API_KEY or pass as CLI argument.\n');
-  process.exit(1);
-}
-
-if (process.argv[2]) {
-  process.stderr.write('[gemini-bridge] WARNING: API key passed via CLI argument — visible in process list. Prefer GEMINI_API_KEY env var.\n');
-}
-
 export const Config = {
   API_KEY,
+
+  validate() {
+    if (!this.API_KEY) {
+      process.stderr.write('[gemini-bridge] ERROR: API key not provided. Set GEMINI_API_KEY or pass as CLI argument.\n');
+      process.exit(1);
+    }
+
+    if (process.argv[2]) {
+      process.stderr.write('[gemini-bridge] WARNING: API key passed via CLI argument — visible in process list. Prefer GEMINI_API_KEY env var.\n');
+    }
+  },
 
   BASE_URL:         'https://generativelanguage.googleapis.com/v1beta/',
   FETCH_TIMEOUT_MS: Number(process.env.GEMINI_FETCH_TIMEOUT_MS) || 30_000,

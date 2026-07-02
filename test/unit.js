@@ -41,17 +41,22 @@ console.log('\n--- composePrompt ---');
 const { composePrompt } = await import('../src/Utils/composePrompt.js');
 
 test('no context → returns prompt unchanged', () => {
-  assert.equal(composePrompt(undefined, 'Hello'), 'Hello');
+  const result = composePrompt(undefined, 'Hello');
+  assert.equal(result.prompt, 'Hello');
+  assert.equal(result.systemInstruction, undefined);
 });
 
 test('empty context array → returns prompt unchanged', () => {
-  assert.equal(composePrompt([], 'Hello'), 'Hello');
+  const result = composePrompt([], 'Hello');
+  assert.equal(result.prompt, 'Hello');
+  assert.equal(result.systemInstruction, undefined);
 });
 
 test('single skill block', () => {
   const result = composePrompt([{ type: 'skill', text: 'You are expert.' }], 'What is Node?');
-  assert.ok(result.includes('[skill]\nYou are expert.'));
-  assert.ok(result.includes('[prompt]\nWhat is Node?'));
+  assert.equal(result.systemInstruction, 'You are expert.');
+  assert.ok(result.prompt.includes('[prompt]\nWhat is Node?'));
+  assert.ok(!result.prompt.includes('[skill]'));
 });
 
 test('multiple blocks in correct order', () => {
@@ -59,22 +64,22 @@ test('multiple blocks in correct order', () => {
     { type: 'skill', text: 'Be concise.' },
     { type: 'data', text: '{"x":1}' },
   ], 'Analyze this.');
-  const lines = result.split('\n\n');
-  assert.equal(lines[0], '[skill]\nBe concise.');
-  assert.equal(lines[1], '[data]\n{"x":1}');
-  assert.equal(lines[2], '[prompt]\nAnalyze this.');
+  assert.equal(result.systemInstruction, 'Be concise.');
+  const lines = result.prompt.split('\n\n');
+  assert.equal(lines[0], '[data]\n{"x":1}');
+  assert.equal(lines[1], '[prompt]\nAnalyze this.');
 });
 
 test('unknown type falls back to "text"', () => {
   const result = composePrompt([{ type: 'foobar', text: 'Something.' }], 'Q?');
-  assert.ok(result.includes('[text]\nSomething.'));
+  assert.ok(result.prompt.includes('[text]\nSomething.'));
 });
 
 test('max 5 blocks enforced', () => {
   const ctx = Array.from({ length: 10 }, (_, i) => ({ type: 'text', text: `Block ${i}` }));
   const result = composePrompt(ctx, 'Q?');
   // 5 context blocks + 1 prompt block = 6 sections
-  assert.equal(result.split('\n\n').length, 6);
+  assert.equal(result.prompt.split('\n\n').length, 6);
 });
 
 test('blocks with empty text are filtered out', () => {
@@ -83,14 +88,14 @@ test('blocks with empty text are filtered out', () => {
     { type: 'data', text: '   ' },
     { type: 'text', text: 'Valid.' },
   ], 'Q?');
-  assert.ok(!result.includes('[skill]'));
-  assert.ok(!result.includes('[data]'));
-  assert.ok(result.includes('[text]\nValid.'));
+  assert.equal(result.systemInstruction, undefined);
+  assert.ok(!result.prompt.includes('[data]'));
+  assert.ok(result.prompt.includes('[text]\nValid.'));
 });
 
 test('text is trimmed', () => {
   const result = composePrompt([{ type: 'text', text: '  trimmed  ' }], 'Q?');
-  assert.ok(result.includes('[text]\ntrimmed'));
+  assert.ok(result.prompt.includes('[text]\ntrimmed'));
 });
 
 // --- ModelCache ---

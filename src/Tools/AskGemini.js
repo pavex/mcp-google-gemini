@@ -36,8 +36,8 @@ export const AskGemini = {
   }),
 
   async handler({ prompt, model, context }) {
-    const composed = composePrompt(context, prompt);
-    const result = await callGemini(composed, model ?? null);
+    const { prompt: composedPrompt, systemInstruction } = composePrompt(context, prompt);
+    const result = await callGemini(composedPrompt, model ?? null, systemInstruction);
     return result;
   },
 };

@@ -33,11 +33,15 @@ export const MODELS = loadModels();
 // --- Gemini API helpers ---
 
 function makeUrl(modelId) {
-  return `${Config.BASE_URL}models/${modelId}:generateContent?key=${Config.API_KEY}`;
+  return `${Config.BASE_URL}models/${modelId}:generateContent`;
 }
 
-function makeBody(promptText) {
-  return JSON.stringify({ contents: [{ parts: [{ text: promptText }] }] });
+function makeBody(promptText, systemInstruction = null) {
+  const body = { contents: [{ parts: [{ text: promptText }] }] };
+  if (systemInstruction) {
+    body.systemInstruction = { parts: [{ text: systemInstruction }] };
+  }
+  return JSON.stringify(body);
 }
 
 /**
@@ -110,7 +114,10 @@ export async function probeModel(modelId) {
   try {
     const res = await fetch(url, {
       method:  'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: {
+        'Content-Type': 'application/json',
+        'x-goog-api-key': Config.API_KEY,
+      },
       body:    makeBody('Hi'),
       signal:  controller.signal,
     });
@@ -187,7 +194,7 @@ function buildModelsStatus(candidates) {
  *                retry: bool, reason: string,
  *                best_retry_in?: string, models_status?: array }
  */
-export async function callGemini(promptText, targetModelId = null) {
+export async function callGemini(promptText, targetModelId = null, systemInstruction = null) {
   const log = (msg) => process.stderr.write(`[gemini-bridge] ${msg}\n`);
 
   const candidates = targetModelId
@@ -196,6 +203,7 @@ export async function callGemini(promptText, targetModelId = null) {
 
   let lastError    = 'unknown';
   let lastRetry    = false;
+  let anyRetryable = false;
   let quotaCount   = 0;
   let rpmCount     = 0;   // models on per-minute quota (short wait)
   let rpdCount     = 0;   // models on per-day quota (long wait)
@@ -223,8 +231,11 @@ export async function callGemini(promptText, targetModelId = null) {
     try {
       const res = await fetch(url, {
         method:  'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body:    makeBody(promptText),
+        headers: {
+          'Content-Type': 'application/json',
+          'x-goog-api-key': Config.API_KEY,
+        },
+        body:    makeBody(promptText, systemInstruction),
         signal:  controller.signal,
       });
 
@@ -272,10 +283,12 @@ export async function callGemini(promptText, targetModelId = null) {
         log(`${model.id} → timeout (${Config.FETCH_TIMEOUT_MS}ms)`);
         lastError = 'timeout';
         lastRetry = true;
+        anyRetryable = true;
       } else {
         log(`${model.id} → network error: ${err.message}`);
         lastError = 'network';
         lastRetry = true;
+        anyRetryable = true;
       }
     } finally {
       clearTimeout(timeout);
@@ -295,7 +308,7 @@ export async function callGemini(promptText, targetModelId = null) {
   const hasMixed    = rpmCount > 0 && rpdCount > 0;
   const retry = allQuota
     ? (hasRpmOnly || hasMixed)   // at least one model recovers within minutes
-    : lastRetry;
+    : (lastRetry || anyRetryable || rpmCount > 0);
 
   // Human-readable reason for the agent
   let reason;

@@ -17,13 +17,23 @@ call npm install --no-audit --no-fund
 
 echo [2/5] Building dist/mcp.js...
 call npm run build
+if %errorlevel% neq 0 (
+  echo ERROR: Build failed.
+  exit /b %errorlevel%
+)
 
-echo [3/5] Copying models.json to dist/...
-if not exist dist mkdir dist
-copy /y models.json dist\models.json >nul
+echo [3/5] Verifying dist/models.json exists...
+if not exist dist\models.json (
+  echo ERROR: dist\models.json is missing.
+  exit /b 1
+)
 
 echo [4/5] Running tests...
 call npm test
+if %errorlevel% neq 0 (
+  echo ERROR: Tests failed.
+  exit /b %errorlevel%
+)
 
 echo [5/5] Cleaning up root node_modules...
 if exist node_modules rd /s /q node_modules

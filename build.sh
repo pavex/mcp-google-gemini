@@ -16,9 +16,11 @@ npm install --no-audit --no-fund
 echo "[2/5] Building dist/mcp.js..."
 npm run build
 
-echo "[3/5] Copying models.json to dist/..."
-mkdir -p dist
-cp models.json dist/models.json
+echo "[3/5] Verifying dist/models.json exists..."
+if [ ! -f dist/models.json ]; then
+  echo "ERROR: dist/models.json is missing."
+  exit 1
+fi
 
 echo "[4/5] Running tests..."
 npm test

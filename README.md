@@ -27,7 +27,7 @@ Built on `@modelcontextprotocol/sdk` with zero Gemini-specific dependencies (use
 
 ## Build
 
-The build script installs dependencies, compiles the bundle, copies `models.json` to `dist/`, runs the full test suite, and cleans up `node_modules`.
+The build script installs dependencies, compiles the bundle, verifies that `dist/models.json` exists, runs the full test suite, and cleans up `node_modules`.
 
 **Windows:**
 ```cmd
@@ -116,12 +116,11 @@ Sends a prompt to Gemini. Automatically selects the best available model by tier
 ```json
 { "type": "skill|data|text", "text": "..." }
 ```
+- `skill` blocks are sent natively as `systemInstruction` in the API payload.
+- `data` and `text` blocks are concatenated prepended to the user prompt.
 
 Composed prompt format when context is provided:
 ```
-[skill]
-You are a senior Node.js engineer.
-
 [data]
 { "version": "2.0" }
 
@@ -198,8 +197,7 @@ src/
     composePrompt.js
 dist/
   mcp.js              — bundled output (esbuild, single file)
-  models.json         — model tier configuration
-models.json           — source of truth (copied to dist/ during build)
+  models.json         — model tier configuration (source of truth)
 test/
   unit.js             — unit tests (ModelCache, composePrompt), no API calls
   integration.js      — integration tests via stdio JSON-RPC

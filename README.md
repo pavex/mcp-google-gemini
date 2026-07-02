@@ -11,9 +11,9 @@ Built on `@modelcontextprotocol/sdk` with zero Gemini-specific dependencies (use
 - **3 MCP tools** — `ask_gemini`, `list_models`, `gemini_status`
 - **Smart model cache** — tracks quota (RPM/RPD), availability, and TTL per model in memory
 - **Quota-aware fallback** — reads `Retry-After` header and quota type (per-minute vs per-day), skips blocked models automatically
-- **Structured prompts** — optional `context[]` blocks (`skill` / `data` / `text`) prepended before the prompt
+- **Structured prompts** — optional `context[]` blocks (`skill` / `data` / `text`) prepended before the prompt (with size limit validation)
 - **Tier-based selection** — models ranked by tier; best available tier selected automatically on every call
-- **Configurable model list** — edit `dist/models.json` to add, remove, or re-rank models without rebuilding
+- **Custom model overrides** — embedded default model list works out of the box, but can be overridden via config file
 - **Zero Gemini deps** — uses built-in Node.js `fetch` (Node 18+)
 
 ---
@@ -27,7 +27,7 @@ Built on `@modelcontextprotocol/sdk` with zero Gemini-specific dependencies (use
 
 ## Build
 
-The build script installs dependencies, compiles the bundle, verifies that `dist/models.json` exists, runs the full test suite, and cleans up `node_modules`.
+The build script installs dependencies, compiles the bundle, runs the full test suite, and cleans up `node_modules` (in production/release runs).
 
 **Windows:**
 ```cmd
@@ -48,11 +48,10 @@ build.cmd
 ./build.sh
 ```
 
-After a successful build, `dist/` is fully self-contained:
+After a successful build, `dist/` contains the self-contained bundle:
 ```
 dist/
   mcp.js        — bundled server (single file, no node_modules needed)
-  models.json   — model tier configuration (safe to edit without rebuilding)
 ```
 
 ---
@@ -83,20 +82,22 @@ Restart Claude Desktop. All three tools will be available in every conversation.
 
 ---
 
-## Model Configuration (`dist/models.json`)
+## Model Configuration
 
-Models are ranked by `tier` — the server always picks the lowest available tier. Edit this file at any time without rebuilding:
+By default, the server uses a built-in model list ranked by `tier` (always attempting the lowest tier first):
+1. `gemini-2.5-pro` (Tier 1) — Best reasoning, complex tasks
+2. `gemini-2.5-flash` (Tier 2) — Fast, capable, balanced
+3. `gemini-2.5-flash-lite` (Tier 3) — Lightweight, high quota
+4. `gemini-2.0-flash` (Tier 4) — Fallback, stable
+
+To override this default list with custom models or different tiers, create a JSON configuration file and set the `GEMINI_MODELS_PATH` environment variable pointing to its absolute path:
 
 ```json
 [
   { "id": "gemini-2.5-pro",        "tier": 1, "desc": "best reasoning, complex tasks" },
-  { "id": "gemini-2.5-flash",      "tier": 2, "desc": "fast, capable, balanced" },
-  { "id": "gemini-2.5-flash-lite", "tier": 3, "desc": "lightweight, high quota" },
-  { "id": "gemini-2.0-flash",      "tier": 4, "desc": "fallback, stable" }
+  { "id": "gemini-2.5-flash",      "tier": 2, "desc": "fast, capable, balanced" }
 ]
 ```
-
-To use a custom path: set `GEMINI_MODELS_PATH=/your/path/models.json` in the environment.
 
 ---
 
@@ -108,9 +109,9 @@ Sends a prompt to Gemini. Automatically selects the best available model by tier
 
 | Parameter | Type | Description |
 |---|---|---|
-| `prompt` | string (required) | The question or instruction |
+| `prompt` | string (required) | The question or instruction (max 200,000 characters) |
 | `model` | string (optional) | Override model ID, e.g. `"gemini-2.5-pro"` |
-| `context` | array (optional) | Structured context blocks, max 5 |
+| `context` | array (optional) | Structured context blocks, max 5 (max 100,000 characters per block) |
 
 **context block:**
 ```json
@@ -132,7 +133,7 @@ Review this code for bugs.
 ```json
 { "ok": true,  "text": "...", "model_used": "gemini-2.5-pro" }
 { "ok": false, "error": "quota",   "retry": false, "best_retry_in": "43s" }
-{ "ok": false, "error": "blocked", "retry": false, "detail": "..." }
+{ "ok": false, "error": "blocked", "retry": false, "reason": "..." }
 { "ok": false, "error": "timeout", "retry": true }
 ```
 
@@ -177,7 +178,9 @@ Use for debugging or cache warmup. For a quick overview without API calls, use `
 | `GEMINI_API_KEY` | — | API key (required) |
 | `GEMINI_FETCH_TIMEOUT_MS` | `30000` | Per-request timeout in milliseconds |
 | `GEMINI_TTL_OK_MS` | `300000` | Cache TTL for healthy models (default 5 min) |
-| `GEMINI_MODELS_PATH` | `dist/models.json` | Custom path to `models.json` |
+| `GEMINI_MAX_PROMPT_CHARS` | `200000` | Max characters allowed in `prompt` parameter |
+| `GEMINI_MAX_CONTEXT_BLOCK_CHARS` | `100000` | Max characters allowed in a single context block |
+| `GEMINI_MODELS_PATH` | — | Optional custom path to models JSON file (replaces built-in list) |
 
 ---
 

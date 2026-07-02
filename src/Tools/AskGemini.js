@@ -9,7 +9,7 @@ export const AskGemini = {
 
   description: [
     'Asks a question to the Gemini AI model.',
-    'Automatically selects the best available model by tier (1=best). Use `model` to override.',
+    'Auto-selects best available model with fallback on quota/errors. Do not pass `model` — let the server choose.',
     'Use `context` to pass structured blocks (skill/data/text) before the prompt.',
     '',
     'Returns JSON string — always check `ok` before using `text`:',
@@ -28,7 +28,7 @@ export const AskGemini = {
 
   inputSchema: z.object({
     prompt: z.string().describe('The question or instruction for Gemini.'),
-    model: z.string().optional().describe('Optional: specific model ID to use (e.g. "gemini-2.5-pro"). If omitted, best available model is selected automatically.'),
+    model: z.string().optional().describe('Escape hatch only — pins exact model, no fallback. Default: omit.'),
     context: z.array(z.object({
       type: z.enum(['skill', 'data', 'text']).describe('"skill" = system instruction, "data" = JSON/context data, "text" = freeform text'),
       text: z.string(),

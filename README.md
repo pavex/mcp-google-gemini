@@ -198,10 +198,13 @@ Use for debugging or cache warmup. For a quick overview without API calls, use `
 
 ```
 src/
-  mcp.js              — entry point (Server + StdioTransport)
-  Config.js           — API key, timeouts, TTL, models path
-  GeminiClient.js     — callGemini(), probeModel(), parse429()
-  ModelCache.js       — in-memory cache per model
+  mcp.js                    — entry point (Server + StdioTransport)
+  Config.js                 — API key, timeouts, TTL, models path
+  GeminiClient.js            — orchestration: probeModel(), callGemini() (fallback loop, response shaping)
+  GeminiAPI.js               — low-level request helpers (URL/body building, 429/response parsing)
+  GeminiModelRegistry.js     — model list bootstrap: auto-discovery, .storage/models.json persistence, manual override
+  GeminiModelPrioritizer.js  — runtime fallback ordering (deprioritize regex, adaptive fail ratio)
+  ModelCache.js              — in-memory cache per model
   Tools/
     AskGemini.js
     ListModels.js

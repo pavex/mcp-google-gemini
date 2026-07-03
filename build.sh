@@ -18,10 +18,6 @@ npm run build
 
 echo "[3/4] Running tests..."
 npm test
-if [ $? -ne 0 ]; then
-  echo "ERROR: Tests failed."
-  exit 1
-fi
 
 echo "[4/4] Cleaning up root node_modules..."
 rm -rf node_modules package-lock.json

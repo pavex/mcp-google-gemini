@@ -1,15 +1,13 @@
 @echo off
 setlocal
 
-if "%~1"=="" (
+if not "%~1"=="" (
+  set GEMINI_API_KEY=%~1
+) else if "%GEMINI_API_KEY%"=="" (
   echo Usage: build.cmd ^<GEMINI_API_KEY^>
   echo   or set GEMINI_API_KEY before running build.cmd
-  if "%GEMINI_API_KEY%"=="" (
-    echo ERROR: No API key provided.
-    exit /b 1
-  )
-) else (
-  set GEMINI_API_KEY=%~1
+  echo ERROR: No API key provided.
+  exit /b 1
 )
 
 echo [1/4] Installing dependencies...

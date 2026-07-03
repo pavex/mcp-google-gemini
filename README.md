@@ -48,6 +48,8 @@ build.cmd
 ./build.sh
 ```
 
+Prefer setting the env var over the CLI argument when possible — an argument can end up in shell history and process listings.
+
 After a successful build, `dist/` contains the self-contained bundle:
 ```
 dist/
@@ -84,13 +86,19 @@ Restart Claude Desktop. All three tools will be available in every conversation.
 
 ## Model Configuration
 
-By default, the server uses a built-in model list ranked by `tier` (always attempting the lowest tier first):
-1. `gemini-2.5-pro` (Tier 1) — Best reasoning, complex tasks
-2. `gemini-2.5-flash` (Tier 2) — Fast, capable, balanced
-3. `gemini-2.5-flash-lite` (Tier 3) — Lightweight, high quota
-4. `gemini-2.0-flash` (Tier 4) — Fallback, stable
+**Self-bootstrapping by default:** on first run, the server calls the Gemini API's `ListModels` endpoint, ranks the results into tiers using a simple heuristic (version number, `pro` > `flash` > `flash-lite`, GA preferred over `-exp`/`-preview`), and writes the result to `.storage/models.json`. On every subsequent start, that file is read directly — no extra API call — and live quota/availability status is restored so the cache survives restarts. Every status change (quota hit, error, success) is persisted back to the same file, so `.storage/models.json` is always an up-to-date, informative snapshot of current model availability.
 
-To override this default list with custom models or different tiers, create a JSON configuration file and set the `GEMINI_MODELS_PATH` environment variable pointing to its absolute path:
+**Fallback order at call time** is not just the stored `tier` — it's adjusted at runtime by two signals, so you don't need to wipe `.storage/models.json` to change behavior:
+- `GEMINI_MODEL_DEPRIORITIZE_REGEX` — a model matching this pattern is always tried last (e.g. set to `"pro"` if your key's `pro` quota is chronically exhausted).
+- **Adaptive daily fail ratio** — each model's today's (UTC) success/failure counts are tracked automatically; a model that's been failing a lot today is nudged toward the back of the fallback queue. Resets every UTC day, so a bad morning doesn't permanently penalize a model.
+
+If auto-discovery fails (e.g. no network on first run) and no persisted file exists yet, a small built-in fallback list is used:
+1. `gemini-2.5-pro` — Best reasoning, complex tasks
+2. `gemini-2.5-flash` — Fast, capable, balanced
+3. `gemini-2.5-flash-lite` — Lightweight, high quota
+4. `gemini-2.0-flash` — Fallback, stable
+
+To bypass auto-discovery entirely and pin a fully custom model list, set `GEMINI_MODELS_PATH` to an absolute path of your own JSON file — this disables auto-discovery and persistence, giving you full manual control:
 
 ```json
 [
@@ -110,7 +118,7 @@ Sends a prompt to Gemini. Automatically selects the best available model by tier
 | Parameter | Type | Description |
 |---|---|---|
 | `prompt` | string (required) | The question or instruction (max 200,000 characters) |
-| `model` | string (optional) | Override model ID, e.g. `"gemini-2.5-pro"` |
+| `model` | string (optional) | Escape hatch only — pins exact model, no fallback. Default: omit. |
 | `context` | array (optional) | Structured context blocks, max 5 (max 100,000 characters per block) |
 
 **context block:**
@@ -180,7 +188,9 @@ Use for debugging or cache warmup. For a quick overview without API calls, use `
 | `GEMINI_TTL_OK_MS` | `300000` | Cache TTL for healthy models (default 5 min) |
 | `GEMINI_MAX_PROMPT_CHARS` | `200000` | Max characters allowed in `prompt` parameter |
 | `GEMINI_MAX_CONTEXT_BLOCK_CHARS` | `100000` | Max characters allowed in a single context block |
-| `GEMINI_MODELS_PATH` | — | Optional custom path to models JSON file (replaces built-in list) |
+| `GEMINI_MODELS_PATH` | — | Optional custom path to models JSON file — disables auto-discovery/persistence |
+| `GEMINI_MODEL_DEPRIORITIZE_REGEX` | — | Models matching this regex (e.g. `"pro"`) are tried last during fallback, regardless of tier — useful on free-tier keys where `pro` models are chronically quota-limited |
+| `GEMINI_MODEL_DEPRIORITIZE_PENALTY` | `1000` | How strongly the regex match is deprioritized (internal ranking score) |
 
 ---
 
@@ -200,7 +210,8 @@ src/
     composePrompt.js
 dist/
   mcp.js              — bundled output (esbuild, single file)
-  models.json         — model tier configuration (source of truth)
+.storage/
+  models.json         — self-maintained: auto-discovered tiers + live status + created_at (git-ignored)
 test/
   unit.js             — unit tests (ModelCache, composePrompt), no API calls
   integration.js      — integration tests via stdio JSON-RPC

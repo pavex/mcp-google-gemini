@@ -187,6 +187,26 @@ test('retry_in format — minutes', () => {
   assert.match(list[0].retry_in, /^\d+m$/);
 });
 
+test('getFailRatio — no data today → 0', () => {
+  assert.equal(Cache.getFailRatio('model-never-seen'), 0);
+});
+
+test('getFailRatio — tracks ok/fail counts within same UTC day', () => {
+  Cache.setOk('model-ratio');
+  Cache.setQuota('model-ratio', 'qpm', 60);
+  Cache.setQuota('model-ratio', 'qpm', 60);
+  // 1 ok, 2 fail → ratio 2/3
+  assert.equal(Cache.getFailRatio('model-ratio'), 2 / 3);
+});
+
+test('restore() hydrates ok_count/fail_count/count_day from persisted state', () => {
+  Cache.restore('model-restored', {
+    status: 'ok', retry_after_ts: null, quota_metric: null, last_checked: null,
+    ok_count: 3, fail_count: 1, count_day: new Date().toISOString().slice(0, 10),
+  });
+  assert.equal(Cache.getFailRatio('model-restored'), 1 / 4);
+});
+
 // --- Summary ---
 
 console.log(`\n${'─'.repeat(40)}`);

@@ -193,15 +193,26 @@ async function run(serverPath, target) {
       if (typeof result.model_used !== 'string') throw new Error('missing model_used');
     });
 
-    // 5. ask_gemini — model override
+    // 5. ask_gemini — model override (pinned model has NO fallback by design;
+    //    a live quota hit on that exact model is a legitimate outcome, not a bug)
     await test('ask_gemini — model override targets gemini-2.5-flash', async () => {
       const res = await client.call('tools/call', {
         name: 'ask_gemini',
         arguments: { prompt: 'Say: yes', model: 'gemini-2.5-flash' },
       });
       const result = JSON.parse(res.result?.content?.[0]?.text ?? '{}');
-      if (!result.ok) throw new Error(`ok=false: ${JSON.stringify(result)}`);
-      if (result.model_used !== 'gemini-2.5-flash') throw new Error(`wrong model: ${result.model_used}`);
+      if (result.ok) {
+        if (result.model_used !== 'gemini-2.5-flash') throw new Error(`wrong model: ${result.model_used}`);
+        return;
+      }
+      const pinnedStatus = result.models_status?.[0];
+      const isLegitimateQuotaFailure =
+        result.error === 'quota' &&
+        pinnedStatus?.id === 'gemini-2.5-flash' &&
+        result.models_status.length === 1;
+      if (!isLegitimateQuotaFailure) {
+        throw new Error(`unexpected failure for pinned model: ${JSON.stringify(result)}`);
+      }
     });
 
     // 6. ask_gemini — context blocks

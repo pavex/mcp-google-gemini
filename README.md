@@ -119,7 +119,7 @@ Sends a prompt to Gemini. Automatically selects the best available model by tier
 |---|---|---|
 | `prompt` | string (required) | The question or instruction (max 200,000 characters) |
 | `model` | string (optional) | Escape hatch only — pins exact model, no fallback. Default: omit. |
-| `context` | array (optional) | Structured context blocks, max 5 (max 100,000 characters per block) |
+| `context` | array (optional) | Structured context blocks, max 5 (max 100,000 characters per block). If passed as a JSON-stringified array (common with some LLM clients), it is automatically parsed by the server. |
 
 **context block:**
 ```json

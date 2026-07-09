@@ -264,6 +264,14 @@ async function run(serverPath, target) {
       if (!res.result?.isError) throw new Error(`expected isError=true, got: ${JSON.stringify(res.result)}`);
     });
 
+    // 9b. validation error on bad arguments → isError: true
+    await test('ask_gemini with missing prompt → validation error', async () => {
+      const res = await client.call('tools/call', { name: 'ask_gemini', arguments: {} });
+      if (!res.result?.isError) throw new Error(`expected isError=true, got: ${JSON.stringify(res.result)}`);
+      const text = res.result?.content?.[0]?.text;
+      if (!text.includes('Validation error:')) throw new Error(`expected validation error text, got: ${text}`);
+    });
+
     // 10. unknown method → JSON-RPC error
     await test('unknown method → JSON-RPC error with code and message', async () => {
       const res = await client.call('unknown/method');

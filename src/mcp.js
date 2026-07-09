@@ -14,7 +14,7 @@ import { GeminiStatus } from './Tools/GeminiStatus.js';
 Config.validate();
 
 const ToolDefinitions = [AskGemini, ListModels, GeminiStatus];
-const handlers = new Map(ToolDefinitions.map(t => [t.name, t.handler.bind(t)]));
+const handlers = new Map(ToolDefinitions.map(t => [t.name, t]));
 
 const server = new Server(
   { name: Config.MCP_SERVER_NAME, version: Config.MCP_SERVER_VERSION },
@@ -31,19 +31,37 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
 
 server.setRequestHandler(CallToolRequestSchema, async (req) => {
   const { name, arguments: args } = req.params;
-  const handler = handlers.get(name);
+  const tool = handlers.get(name);
 
-  if (!handler) {
+  if (!tool) {
     return { content: [{ type: 'text', text: `Error: Unknown tool "${name}"` }], isError: true };
   }
 
   try {
-    const result = await handler(args ?? {});
+    const validatedArgs = tool.inputSchema.parse(args ?? {});
+    const result = await tool.handler(validatedArgs);
     return { content: [{ type: 'text', text: JSON.stringify(result) }] };
   } catch (err) {
-    const msg = err instanceof z.ZodError
-      ? `Validation error: ${err.errors.map(e => e.message).join(', ')}`
+    let msg = err instanceof z.ZodError
+      ? `Validation error: ${err.errors.map(e => `${e.path.join('.') || 'root'}: ${e.message}`).join(', ')}`
       : `Error: ${err.message}`;
+
+    if (err instanceof z.ZodError && name === 'ask_gemini') {
+      msg += `\n\nExpected structure for ask_gemini:
+{
+  "prompt": "Your question/instruction here (string, required)",
+  "context": [
+    {
+      "type": "skill" | "data" | "text",
+      "text": "Your context content here (string)"
+    }
+  ] (array of objects, max 5, optional),
+  "model": "exact-model-id" (string, optional)
+}
+
+NOTE: "context" must be a raw JSON array of objects. NEVER pass it as a JSON-string or wrap it in a string.`;
+    }
+
     return { content: [{ type: 'text', text: msg }], isError: true };
   }
 });

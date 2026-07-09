@@ -114,6 +114,64 @@ test('skill block exceeding MAX_CONTEXT_BLOCK_CHARS throws RangeError', () => {
   assert.throws(() => composePrompt([{ type: 'skill', text: overlong }], 'Q?'), RangeError);
 });
 
+test('invalid prompt type throws TypeError', () => {
+  assert.throws(() => composePrompt(undefined, undefined), TypeError);
+  assert.throws(() => composePrompt(undefined, null), TypeError);
+  assert.throws(() => composePrompt(undefined, 123), TypeError);
+});
+
+// --- AskGemini Schema Validation (Preprocessing & Error Handling) ---
+
+console.log('\n--- AskGemini Schema Validation ---');
+
+const { AskGemini } = await import('../src/Tools/AskGemini.js');
+
+test('AskGemini validation — valid arguments (no context)', () => {
+  const args = { prompt: 'Hello' };
+  const parsed = AskGemini.inputSchema.parse(args);
+  assert.equal(parsed.prompt, 'Hello');
+  assert.equal(parsed.context, undefined);
+});
+
+test('AskGemini validation — valid arguments (context as array)', () => {
+  const args = {
+    prompt: 'Hello',
+    context: [{ type: 'data', text: 'Some context' }]
+  };
+  const parsed = AskGemini.inputSchema.parse(args);
+  assert.equal(parsed.prompt, 'Hello');
+  assert.equal(parsed.context.length, 1);
+  assert.equal(parsed.context[0].type, 'data');
+  assert.equal(parsed.context[0].text, 'Some context');
+});
+
+test('AskGemini validation — valid arguments (context as stringified JSON array)', () => {
+  const args = {
+    prompt: 'Hello',
+    context: JSON.stringify([{ type: 'data', text: 'Some context' }])
+  };
+  const parsed = AskGemini.inputSchema.parse(args);
+  assert.equal(parsed.prompt, 'Hello');
+  assert.equal(parsed.context.length, 1);
+  assert.equal(parsed.context[0].type, 'data');
+  assert.equal(parsed.context[0].text, 'Some context');
+});
+
+test('AskGemini validation — invalid context JSON string throws', () => {
+  const args = {
+    prompt: 'Hello',
+    context: 'not a valid json'
+  };
+  assert.throws(() => AskGemini.inputSchema.parse(args));
+});
+
+test('AskGemini validation — missing prompt throws', () => {
+  const args = {
+    context: [{ type: 'data', text: 'Some context' }]
+  };
+  assert.throws(() => AskGemini.inputSchema.parse(args));
+});
+
 // --- ModelCache ---
 
 console.log('\n--- ModelCache ---');

@@ -31,10 +31,22 @@ export const AskGemini = {
   inputSchema: z.object({
     prompt: z.string().max(Config.MAX_PROMPT_CHARS).describe(`The question or instruction for Gemini (max ${Config.MAX_PROMPT_CHARS} chars).`),
     model: z.string().optional().describe('Escape hatch only — pins exact model, no fallback. Default: omit.'),
-    context: z.array(z.object({
-      type: z.enum(['skill', 'data', 'text']).describe('"skill" = system instruction (sent natively), "data" = JSON/context data, "text" = freeform text'),
-      text: z.string().max(Config.MAX_CONTEXT_BLOCK_CHARS).describe(`Block text content (max ${Config.MAX_CONTEXT_BLOCK_CHARS} chars).`),
-    })).max(5).optional().describe('Optional structured context blocks. skill blocks become system instructions.'),
+    context: z.preprocess(
+      (val) => {
+        if (typeof val === 'string') {
+          try {
+            return JSON.parse(val);
+          } catch {
+            return val;
+          }
+        }
+        return val;
+      },
+      z.array(z.object({
+        type: z.enum(['skill', 'data', 'text']).describe('"skill" = system instruction (sent natively), "data" = JSON/context data, "text" = freeform text'),
+        text: z.string().max(Config.MAX_CONTEXT_BLOCK_CHARS).describe(`Block text content (max ${Config.MAX_CONTEXT_BLOCK_CHARS} chars).`),
+      })).max(5).optional()
+    ).describe('Optional structured context blocks. Must be a raw JSON array of objects. NEVER stringify this array or wrap it in a string.'),
   }),
 
   async handler({ prompt, model, context }) {

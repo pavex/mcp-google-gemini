@@ -19,6 +19,10 @@ const MAX_BLOCKS  = 5;
  * @throws {RangeError} if prompt or any block text exceeds configured limits.
  */
 export function composePrompt(context, prompt) {
+  if (typeof prompt !== 'string') {
+    throw new TypeError('prompt must be a string');
+  }
+
   if (prompt.length > Config.MAX_PROMPT_CHARS) {
     throw new RangeError(`prompt exceeds maximum length (${prompt.length} > ${Config.MAX_PROMPT_CHARS} chars).`);
   }

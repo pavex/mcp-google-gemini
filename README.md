@@ -27,7 +27,7 @@ Built on `@modelcontextprotocol/sdk` with zero Gemini-specific dependencies (use
 
 ## Build
 
-The build script installs dependencies, compiles the bundle, runs the full test suite, and cleans up `node_modules` (in production/release runs).
+The build script installs dependencies, compiles the bundle, runs the test suite, and cleans up `node_modules` (in production/release runs).
 
 **Windows:**
 ```cmd
@@ -49,6 +49,8 @@ build.cmd
 ```
 
 Prefer setting the env var over the CLI argument when possible — an argument can end up in shell history and process listings.
+
+**The API key is optional at build time.** Unit tests (no API calls) always run. If no key is provided (CLI arg or env var), the build prints a warning and skips the integration tests (which spawn a real server and need a live key) instead of failing — useful for CI or packaging without exposing a key. The build only fails on an actual build/test failure, never merely on a missing key.
 
 After a successful build, `dist/` contains the self-contained bundle:
 ```
@@ -119,7 +121,7 @@ Sends a prompt to Gemini. Automatically selects the best available model by tier
 |---|---|---|
 | `prompt` | string (required) | The question or instruction (max 200,000 characters) |
 | `model` | string (optional) | Escape hatch only — pins exact model, no fallback. Default: omit. |
-| `context` | array (optional) | Structured context blocks, max 5 (max 100,000 characters per block). If passed as a JSON-stringified array (common with some LLM clients), it is automatically parsed by the server. |
+| `context` | array (optional) | Structured context blocks, max 5 (max 100,000 characters per block). Prefer a raw array of `{type, text}` objects — see tolerated shapes below. |
 
 **context block:**
 ```json
@@ -127,6 +129,13 @@ Sends a prompt to Gemini. Automatically selects the best available model by tier
 ```
 - `skill` blocks are sent natively as `systemInstruction` in the API payload.
 - `data` and `text` blocks are concatenated prepended to the user prompt.
+
+**Tolerated malformed shapes** — some LLM clients don't send exactly the shape above. The server normalizes these automatically instead of rejecting them:
+- A JSON-stringified array (e.g. `"[{\"type\":\"data\",\"text\":\"...\"}]"`) is parsed automatically.
+- A single bare object (e.g. `{"type":"data","text":"..."}` instead of wrapped in `[...]`) is auto-wrapped into a one-element array.
+- A plain string inside the array (e.g. `["some note"]`) is treated as a `{type:"text", text:"some note"}` block.
+
+These are fallbacks for robustness, not the recommended format — always prefer sending the raw `[{type,text}, ...]` array directly.
 
 Composed prompt format when context is provided:
 ```
@@ -146,6 +155,12 @@ Review this code for bugs.
 ```
 
 Always check `ok` before using `text`.
+
+**Handling failures (for the calling agent):**
+- `retry: true` — wait `best_retry_in`, then retry, up to ~3 attempts total. If it's still failing, or `best_retry_in` is very long (minutes+), stop and tell the user Gemini is temporarily unavailable instead of looping.
+- `error: "quota"`, `retry: false` — daily quota hit; don't retry until tomorrow UTC, inform the user.
+- `error: "blocked"` — content blocked by safety filters; inform the user, retrying will not help.
+- If you passed `model` and got `ok: false`, retry **without** `model` so the server can fall back to another model — unless you specifically need that exact one.
 
 ---
 

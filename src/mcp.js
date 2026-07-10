@@ -59,7 +59,7 @@ server.setRequestHandler(CallToolRequestSchema, async (req) => {
   "model": "exact-model-id" (string, optional)
 }
 
-NOTE: "context" must be a raw JSON array of objects. NEVER pass it as a JSON-string or wrap it in a string.`;
+NOTE: "context" should be a raw JSON array of objects, not a JSON-stringified string. A stringified array is tolerated as a fallback, but sending it raw avoids this validation error entirely.`;
     }
 
     return { content: [{ type: 'text', text: msg }], isError: true };

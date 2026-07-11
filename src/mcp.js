@@ -7,11 +7,13 @@ import { CallToolRequestSchema, ListToolsRequestSchema } from '@modelcontextprot
 import { zodToJsonSchema } from 'zod-to-json-schema';
 import { z } from 'zod';
 import { Config } from './Config.js';
+import { initModels } from './GeminiModelRegistry.js';
 import { AskGemini } from './Tools/AskGemini.js';
 import { ListModels } from './Tools/ListModels.js';
 import { GeminiStatus } from './Tools/GeminiStatus.js';
 
 Config.validate();
+await initModels();
 
 const ToolDefinitions = [AskGemini, ListModels, GeminiStatus];
 const handlers = new Map(ToolDefinitions.map(t => [t.name, t]));

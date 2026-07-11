@@ -1,51 +1,13 @@
-// GeminiClient.js — orchestration: probeModel(), callGemini() (fallback loop, response shaping)
+// GeminiClient.js — orchestration: callGemini() (fallback loop, response shaping)
 
 import { Config }             from './Config.js';
 import * as Cache             from './ModelCache.js';
 import { MODELS, persistSnapshot } from './GeminiModelRegistry.js';
 import { effectivePriority }  from './GeminiModelPrioritizer.js';
 import { fetchGeminiResponse } from './GeminiAPI.js';
+import { probeModel }         from './GeminiProbe.js';
 
-export { MODELS };
-
-// --- Probe (used by gemini_status) ---
-
-/**
- * Tests one model with a short message and refreshes its cache entry.
- * Returns { ok, model, status, error? }
- */
-export async function probeModel(modelId) {
-  const result = await fetchGeminiResponse(modelId, 'Hi');
-
-  switch (result.kind) {
-    case 'quota':
-      Cache.setQuota(modelId, result.quotaMetric, result.retryAfterSec);
-      persistSnapshot(MODELS);
-      return { ok: false, model: modelId, status: `quota_${result.quotaMetric}`, error: 'quota exceeded' };
-
-    case 'auth':
-      Cache.setError(modelId);
-      persistSnapshot(MODELS);
-      return { ok: false, model: modelId, status: 'error', error: `HTTP ${result.status}` };
-
-    case 'http_error':
-      return { ok: false, model: modelId, status: 'error', error: `HTTP ${result.status}` };
-
-    case 'blocked':
-      return { ok: false, model: modelId, status: 'error', error: result.reason };
-
-    case 'timeout':
-      return { ok: false, model: modelId, status: 'timeout', error: result.message };
-
-    case 'network':
-      return { ok: false, model: modelId, status: 'network', error: result.message };
-
-    case 'ok':
-      Cache.setOk(modelId);
-      persistSnapshot(MODELS);
-      return { ok: true, model: modelId, status: 'ok' };
-  }
-}
+export { MODELS, probeModel };
 
 // --- callGemini (used by ask_gemini) ---
 
@@ -93,6 +55,16 @@ export async function callGemini(promptText, targetModelId = null, systemInstruc
   const candidates = targetModelId
     ? [MODELS.find(m => m.id === targetModelId) ?? { id: targetModelId, tier: 99, desc: '' }]
     : [...MODELS].sort((a, b) => effectivePriority(b) - effectivePriority(a));
+
+  if (candidates.length === 0) {
+    log('no models known — call list_models with refresh:true first');
+    return {
+      ok:    false,
+      error: 'no_models',
+      retry: false,
+      reason: 'No models known yet. Call list_models with refresh:true to discover and validate available models, then retry.',
+    };
+  }
 
   let lastError    = 'unknown';
   let lastRetry    = false;

@@ -22,6 +22,7 @@ export const AskGemini = {
     '               models_status: [{id, status, retry_in}, ...] }',
     '  { ok: false, error: "blocked", retry: false, reason: "..." }',
     '  { ok: false, error: "timeout"|"network", retry: true, reason: "..." }',
+    '  { ok: false, error: "no_models", retry: false, reason: "..." } — call list_models with refresh:true, then retry.',
     '',
     'When ok=false and retry=true: wait for best_retry_in then try again, up to ~3 attempts total.',
     'If it is still failing after that (or best_retry_in is very long, e.g. minutes+), stop retrying and tell the user Gemini is temporarily unavailable — do not loop indefinitely.',

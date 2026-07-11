@@ -165,11 +165,14 @@ async function run(serverPath, target) {
     });
 
     // 3. list_models — no API call, reads from dist/models.json via GEMINI_MODELS_PATH
-    await test('list_models — returns array with required fields and valid statuses', async () => {
+    await test('list_models — returns { models, stale, refreshed_at } with required model fields', async () => {
       const res = await client.call('tools/call', { name: 'list_models', arguments: {} });
       const text = res.result?.content?.[0]?.text;
       if (!text) throw new Error('no content text');
-      const models = JSON.parse(text);
+      const result = JSON.parse(text);
+      if (typeof result.refreshed !== 'boolean') throw new Error('missing refreshed');
+      if (typeof result.stale !== 'boolean') throw new Error('missing stale');
+      const models = result.models;
       if (!Array.isArray(models) || models.length === 0) throw new Error('empty model list');
       const required = ['id', 'tier', 'desc', 'status', 'retry_in'];
       const validStatuses = new Set(['ok', 'quota_rpm', 'quota_rpd', 'error', 'unknown']);
@@ -252,7 +255,8 @@ async function run(serverPath, target) {
     // 8. cache updated — after ask_gemini at least one model must be ok
     await test('list_models after ask — at least one model shows status: ok', async () => {
       const res = await client.call('tools/call', { name: 'list_models', arguments: {} });
-      const models = JSON.parse(res.result?.content?.[0]?.text ?? '[]');
+      const result = JSON.parse(res.result?.content?.[0]?.text ?? '{}');
+      const models = result.models ?? [];
       if (!models.some(m => m.status === 'ok')) {
         throw new Error(`no ok model — statuses: ${models.map(m => `${m.id}:${m.status}`).join(', ')}`);
       }

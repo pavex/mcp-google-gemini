@@ -2,6 +2,7 @@
 
 import { z } from 'zod';
 import { MODELS, probeModel } from '../GeminiClient.js';
+import { persistSnapshot }    from '../GeminiModelRegistry.js';
 import { listForAgent, isBlocked, getEntry } from '../ModelCache.js';
 
 export const GeminiStatus = {
@@ -39,6 +40,8 @@ export const GeminiStatus = {
         break;
       }
     }
+
+    persistSnapshot(MODELS);
 
     const available = firstOk !== null;
     const summary = available

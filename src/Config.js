@@ -26,6 +26,15 @@ export const Config = {
   MAX_CONTEXT_BLOCK_CHARS: Number(process.env.GEMINI_MAX_CONTEXT_BLOCK_CHARS) || 100_000,
   MAX_PROMPT_CHARS:        Number(process.env.GEMINI_MAX_PROMPT_CHARS)        || 200_000,
 
+  // Discovery: model IDs matching this regex are excluded as candidates for
+  // ask_gemini even if the API reports generateContent support — catches
+  // specialized non-chat product lines (image/tts/robotics/computer-use/...)
+  // that share the "gemini-" naming prefix but aren't meant for text prompts.
+  MODEL_EXCLUDE_REGEX: new RegExp(
+    process.env.GEMINI_MODEL_EXCLUDE_REGEX || 'image|tts|computer-use|robotics',
+    'i'
+  ),
+
   MCP_SERVER_NAME:    'gemini-bridge',
   MCP_SERVER_VERSION: '2.0.0',
 };
